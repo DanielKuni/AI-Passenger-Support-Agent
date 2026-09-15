@@ -20,6 +20,7 @@ from . import config
 from .agent import needs_live_status
 from .mcp_client import MCPBridge
 from .rag import STOPWORDS, BM25Retriever, content_tokens, tokenize
+from .redact import redact_sensitive
 
 LABEL_HE = ("תשובה תבניתית במצב הדגמה ללא מודל. היא מורכבת מציטוטים ממסמכי ההדגמה ומתוצאות כלי MCP בלבד, "
             "ולא נוצרה על ידי מודל שפה.")
@@ -46,7 +47,6 @@ _W = r"(?<![א-ת])(?:%s)(?![א-ת])"   # Hebrew word boundary: "עלות" must 
 PRICE_QUESTION_RE = re.compile(_W % r"כמה עולה|כמה זה עולה|כמה משלמים|מה המחיר|מחיר|מחירים|עלות|תעריף|תעריפים")
 PRICE_SOURCE_RE = re.compile(r"₪|\d+\s*(ש\"ח|שקל|שקלים)")
 PRICE_TOPIC_RE = re.compile(r"תעריף|מחיר")
-LONG_DIGITS_RE = re.compile(r"\d[\d \-]{11,}\d")   # 13+ digit runs: looks like a full card number
 
 
 def _known_stations() -> list[str]:
@@ -91,12 +91,13 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     original = question
     question = question.strip()
 
-    # 0. Redact anything that looks like a full card number; never echo it.
-    redacted = False
-    if LONG_DIGITS_RE.search(question):
-        question = LONG_DIGITS_RE.sub("[מספר הוסר]", question)
-        redacted = True
-        steps.append({"step": "redaction", "detail_he": "זוהה מספר ארוך שנראה כמספר כרטיס; הוסר לפני כל עיבוד."})
+    # 0. Redact card numbers, identity-like numbers and keyword-marked secrets (passwords, PINs, ID numbers)
+    #    before anything else sees the text: retrieval, the case, the MCP call, the logs and the reply.
+    question, redaction_kinds = redact_sensitive(question)
+    redacted = bool(redaction_kinds)
+    if redacted:
+        flags.append("sensitive_details_redacted")
+        steps.append({"step": "redaction", "detail_he": "זוהו פרטים רגישים (מספר כרטיס, מספר זהות או סיסמה). הם הוסרו לפני כל עיבוד ולא נשמרים."})
 
     tokens = tokenize(question)
     # 1. Very short questions: ask what it is about (use the previous turn for retrieval context if any).
@@ -204,7 +205,8 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     # 7. Assemble the templated reply.
     parts: list[str] = []
     if redacted:
-        parts.append("לתשומת לבך: הסרתי מספר ארוך שנראה כמספר כרטיס. אין למסור מספר כרטיס מלא. ארבע ספרות אחרונות מספיקות לבירור.")
+        parts.append("לתשומת לבך: הסרתי פרטים רגישים מהשאלה (כגון מספר כרטיס, מספר זהות או סיסמה) והם לא נשמרו. "
+                     "אין למסור פרטים כאלה בצ'אט. ארבע ספרות אחרונות של כרטיס מספיקות לבירור.")
     if status_text:
         parts.append(status_text)
     if conflict:

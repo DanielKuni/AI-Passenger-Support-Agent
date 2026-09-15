@@ -88,6 +88,7 @@ app/
   server.py          FastAPI app and JSON API
   offline_demo.py    three guided scenarios (real retrieval, real MCP calls, predefined labelled replies)
   offline_workflow.py deterministic free question workflow (rules, quotes, MCP; no model)
+  redact.py          removes card numbers, identity numbers and keyword-marked secrets before a case is prepared
   agent.py           optional Claude mode (tool loop and validation)
   prompts.py         system prompt for the optional Claude mode
   rag.py             Markdown loader, heading chunker, Hebrew tokenizer, BM25 with field weights
@@ -98,6 +99,7 @@ mcp_server/          MCP server and demo_status.json (demo_cases.json is created
 docs/                seven demo guidance documents (Hebrew), a README about them, and the screenshot
 eval/                cases.json, run_eval.py, results.md (measured output of the last run)
 tests/               test_agent_offline.py (the optional Claude loop with a stub model and the real MCP server)
+                     test_redaction.py (sensitive details never reach the stored demo case or the MCP log)
 ```
 
 ## 5. Running it
@@ -134,6 +136,10 @@ python -m eval.run_eval
 
 ```bash
 python -m tests.test_agent_offline
+```
+
+```bash
+python -m tests.test_redaction
 ```
 
 Deep links: `/?autorun=payment_rag,status_mcp,handoff_mcp` runs the guided cards, and `/?ask=<question>` submits
@@ -197,7 +203,7 @@ the last run is in [`eval/results.md`](eval/results.md).
 | A | Retrieval: expected document among the top 4 passages (15 cases with an expected document) | 15/15 |
 | B | Optional Claude mode on the original 24 cases | Not run (no API key configured) |
 | C | Guided cards: cited passages retrieved, MCP calls succeeded, demo case id returned | 3/3 |
-| D | Deterministic workflow on the original 24 cases | 24/24 |
+| D | Deterministic workflow on the original 24 cases plus 2 privacy cases that inspect the stored demo case | 26/26 |
 | E | Deterministic workflow on 10 additional paraphrase cases | 10/10 (7/10 when first run, before later rule changes) |
 | F | Deterministic workflow on 12 blind questions, written after the rules were frozen and run once | 8/12 |
 
@@ -219,9 +225,14 @@ How to read these numbers:
   סרק את הקוד בכניסה" (the reply quotes the payment methods list rather than the reader help section); and
   "החזירו לי רק חצי מהחיוב הכפול, מגיע לי את השאר" (this refund phrasing is not covered by the handoff rules, so no
   case is prepared).
-- The blind safety question with a four digit password passed its check on the reply text, but the demo case
-  summary stores the passenger's question verbatim, so anything typed into a handoff question ends up in the
-  demo case file. Only long digit runs that look like card numbers are removed.
+- The blind safety question with a four digit password originally passed only on the reply text: the demo case
+  stored the question verbatim, password included. This was fixed with a redaction step (`app/redact.py`) that
+  runs before the case is composed, again in the MCP client before the input is sent and logged, and again in the
+  MCP server before the case is written. Card-like numbers, identity-like numbers and secrets that follow a keyword
+  such as סיסמה, קוד סודי, PIN or תעודת זהות are replaced by a marker, while short useful numbers such as the last
+  four digits of a card are kept. `tests/test_redaction.py` runs five sensitive questions through the real workflow
+  and MCP server and inspects the stored case file and the MCP call log, and two eval cases (`safe_02`, `safe_03`)
+  check the stored case as well as the reply.
 
 No business impact figures are claimed.
 

@@ -16,6 +16,11 @@ from pathlib import Path
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, get_default_environment, stdio_client
 
+from .redact import redact_mapping
+
+# Tools whose string arguments are redacted before they are sent or logged (a case must never carry secrets).
+REDACTED_TOOLS = {"prepare_support_case"}
+
 
 def _attr(obj, *names, default=None):
     """mcp 2.x uses snake_case attributes; 1.x used camelCase. Accept both."""
@@ -59,6 +64,9 @@ class MCPBridge:
     async def call_tool(self, name: str, arguments: dict) -> tuple[str, bool]:
         """Returns (text_for_model, is_error). Logs the call."""
         assert self.session is not None, "MCP bridge not started"
+        redaction_kinds: list[str] = []
+        if name in REDACTED_TOOLS:
+            arguments, redaction_kinds = redact_mapping(arguments)
         t0 = time.perf_counter()
         try:
             result = await self.session.call_tool(name, arguments)
@@ -77,6 +85,7 @@ class MCPBridge:
             "is_error": is_error,
             "duration_ms": round((time.perf_counter() - t0) * 1000),
             "demo": True,
+            "redacted": sorted(set(redaction_kinds)),
         }
         self.call_log.append(entry)
         print(f"[mcp-client] {name}({json.dumps(arguments, ensure_ascii=False)}) -> "

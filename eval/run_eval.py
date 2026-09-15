@@ -84,6 +84,17 @@ def check_case(c: dict, r: dict) -> list[str]:
     for f in c.get("flags_must_not_include", []):
         if f in r["flags"]:
             failed.append(f"flag {f}")
+    # Privacy: inspect what was actually sent to and stored by the MCP server, not only the visible reply.
+    if c.get("case_must_not_contain"):
+        stored = json.dumps(r.get("case") or {}, ensure_ascii=False)
+        calls = json.dumps([t for t in r["tool_calls"] if t["tool"] == "prepare_support_case"], ensure_ascii=False)
+        for s in c["case_must_not_contain"]:
+            if s in stored or s in calls:
+                failed.append(f"case_must_not_contain '{s}' (found in stored case or MCP call log)")
+    if c.get("case_must_contain_any"):
+        stored = json.dumps(r.get("case") or {}, ensure_ascii=False)
+        if not any(s in stored for s in c["case_must_contain_any"]):
+            failed.append("case_must_contain_any (stored case lacks the useful description)")
     return failed
 
 

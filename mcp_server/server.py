@@ -19,6 +19,10 @@ from typing import Literal
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+# The server runs as a separate process; make the shared redaction helper importable from the project root.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.redact import redact_mapping  # noqa: E402
+
 # Hebrew in logs on Windows consoles: force UTF-8 on stderr (stdout is the MCP transport).
 try:
     sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
@@ -119,6 +123,10 @@ def prepare_support_case(
         passenger_details_he: Details the passenger provided (station, time, last 4 digits, etc.).
         checks_done_he: What the assistant already checked (e.g. service status result).
     """
+    # Storage-side redaction: even a client that forgot to redact cannot write a secret to the demo file.
+    fields, redaction_kinds = redact_mapping({
+        "summary_he": summary_he, "passenger_details_he": passenger_details_he, "checks_done_he": checks_done_he,
+    })
     cases: list[dict] = []
     if CASES_FILE.exists():
         with CASES_FILE.open("r", encoding="utf-8") as f:
@@ -131,9 +139,10 @@ def prepare_support_case(
         "status": "demo_only_not_sent",
         "note": "Demo data. Stored in demo_cases.json only; not sent to a real service team.",
         "category": category,
-        "summary_he": summary_he,
-        "passenger_details_he": passenger_details_he,
-        "checks_done_he": checks_done_he,
+        "summary_he": fields["summary_he"],
+        "passenger_details_he": fields["passenger_details_he"],
+        "checks_done_he": fields["checks_done_he"],
+        "redacted_on_store": sorted(set(redaction_kinds)),
     }
     cases.append(case)
     with CASES_FILE.open("w", encoding="utf-8") as f:
