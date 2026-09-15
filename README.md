@@ -240,14 +240,16 @@ load, later calls 0.16 to 0.34 s for sentences of 40 to 70 characters producing 
 | Triple click on send with one question | One user message, one reply, one request in the server log |
 | Microphone button | The API is present; the click requested the microphone, which the embedded browser blocks, and the bar showed the "not allowed" explanation with typing still available |
 
-**Not yet verified.** Real microphone capture, the automatic submission after a real spoken sentence, and
-audible playback in a normal browser have not been verified: the Claude in Chrome extension was not connected on
-the development machine, so the flow could not be driven in a regular Chrome window, and the embedded browser
-blocks the microphone and has no speakers check. Audio quality of the Piper voice was not judged by ear in this
-repository; sample WAV files can be produced with `python -m piper -m voices/he_IL-saspeech-medium.onnx`. To
-verify on your machine: open the page in Chrome, allow the microphone, press the microphone button, ask a question
-in Hebrew, and confirm that it is sent once, that the summary is heard, and that the stop button interrupts it.
-This project is a text workflow with voice input and output controls, not a verified conversational voice agent.
+**Verified in a normal browser** (by the repository owner, in a regular Chrome window on the development machine
+with a microphone and speakers, 2026-09-15): a question was asked in Hebrew through the microphone button, the
+question was sent automatically, and the reply was played aloud. This was a manual end to end check of the
+hands free flow, not a measurement.
+
+**Not verified in a normal browser.** Interrupting playback with the stop button, repeated submissions, and the
+behaviour when Chrome blocks automatic playback were checked only in the embedded browser (table above). Audio
+quality of the Piper voice has not been rated in this repository; sample WAV files can be produced with
+`python -m piper -m voices/he_IL-saspeech-medium.onnx`. This project is a text workflow with voice input and
+output controls that passed one manual spoken check; it has not been evaluated as a conversational voice agent.
 
 ## 8. What was measured
 
@@ -313,7 +315,8 @@ Part B. This mode has not been evaluated in this repository, and Part B is repor
 - **Voice depends on the browser and on an optional local voice.** Recognition needs a browser that implements
   the Web Speech API and microphone permission; in Chrome the audio is processed by the browser vendor's service.
   Hebrew playback needs either a Hebrew browser voice or the optional Piper voice, whose dataset licence is
-  non-commercial. Real microphone capture and audible playback have not been verified in a normal browser yet.
+  non-commercial. The hands free flow passed one manual check in a regular Chrome window (section 7); it has not
+  been tested across browsers, devices or noisy environments.
 - **Spoken summaries are extracts, not summaries in the language sense.** They are sentences copied from the
   reply, chosen by fixed rules. They are always faithful to the reply, but they can be blunt or incomplete.
 - **Demo cases are local.** They are written to `mcp_server/demo_cases.json` and nowhere else.
