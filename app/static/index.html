@@ -17,8 +17,6 @@
   select, button { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }
   button:disabled { opacity:.5; cursor:not-allowed; }
   button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  button.mic { font-size:18px; padding:4px 10px; }
-  button.mic.rec { background:#fde8e8; border-color:#c62828; }
   main { display:grid; grid-template-columns: 1.2fr 1fr; gap:16px; padding:16px 20px; max-width:1400px; margin:0 auto; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
@@ -40,17 +38,30 @@
   .badge.handoff { background:#c62828; } .badge.unsupported { background:#546e7a; }
   .badge.predefined { background:#6a1b9a; }
   .badge.model { background:#0b5fff; }
+  .spoken { margin-top:8px; padding:8px 10px; background:#fff; border-right:4px solid #6a1b9a; border-radius:6px; font-size:14px; }
+  .spoken .lbl { font-size:12px; color:var(--muted); display:block; margin-bottom:2px; }
   .sources { margin-top:8px; font-size:13px; color:var(--muted); }
   .sources details { margin-top:4px; } .sources summary { cursor:pointer; }
   .sources .excerpt { background:#fff; border:1px solid var(--line); border-radius:6px; padding:8px; margin-top:4px; color:var(--text); white-space:pre-wrap; }
   .case { margin-top:8px; font-size:13px; background:#fff; border:1px dashed var(--red); border-radius:6px; padding:8px; }
   .steps { margin-top:8px; font-size:12px; color:var(--muted); border-top:1px dotted var(--line); padding-top:6px; }
   .steps li { margin:2px 0; }
-  .tts { margin-top:6px; display:flex; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
+  .tts { margin-top:6px; display:flex; gap:6px; align-items:center; font-size:12px; color:var(--muted); flex-wrap:wrap; }
   .tts button { font-size:12px; padding:2px 8px; }
-  .composer { display:flex; gap:8px; margin-top:10px; align-items:stretch; }
+  /* voice conversation bar */
+  .voicebar { display:flex; align-items:center; gap:10px; margin-top:10px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:#fafbfc; }
+  .voicebar .dot { width:12px; height:12px; border-radius:50%; background:#9aa4b2; flex:none; }
+  .voicebar.listening .dot { background:#c62828; animation: pulse 1s infinite; }
+  .voicebar.thinking .dot { background:#f9a825; animation: pulse 1s infinite; }
+  .voicebar.speaking .dot { background:#2e7d32; animation: pulse 1s infinite; }
+  .voicebar.blocked .dot { background:#f9a825; }
+  @keyframes pulse { 0% { opacity:1 } 50% { opacity:.3 } 100% { opacity:1 } }
+  .voicebar .state { flex:1; font-size:13px; }
+  .voicebar .engine { font-size:12px; color:var(--muted); }
+  button.mic { font-size:20px; padding:6px 12px; border-radius:50%; width:48px; height:48px; }
+  button.mic.active { background:#fde8e8; border-color:#c62828; }
+  .composer { display:flex; gap:8px; margin-top:8px; align-items:stretch; }
   .composer textarea { flex:1; padding:8px; border:1px solid var(--line); border-radius:8px; resize:vertical; min-height:44px; }
-  .voice-status { font-size:12px; color:var(--muted); margin-top:4px; min-height:16px; }
   .examples { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
   .examples button { font-size:12px; padding:4px 8px; }
   .dev h2 { font-size:15px; margin:0 0 8px; }
@@ -88,12 +99,18 @@
       <div class="scenarios" id="scenarios"></div>
     </div>
     <div class="messages" id="messages"></div>
+
+    <div class="voicebar" id="voicebar">
+      <button class="mic" id="mic" title="לחיצה אחת מתחילה האזנה בעברית. לחיצה נוספת עוצרת.">🎤</button>
+      <span class="dot"></span>
+      <span class="state" id="voiceState">מוכן. לחצו על המיקרופון ודברו בעברית, או הקלידו שאלה.</span>
+      <button id="stopAll" hidden>■ עצירה</button>
+      <span class="engine" id="engineNote"></span>
+    </div>
     <div class="composer">
-      <button class="mic" id="mic" title="דיבור בעברית (he-IL)">🎤</button>
-      <textarea id="input" placeholder="כתבו או דברו שאלה על תשלום, שיבוש בשירות או עזרה בתחנה"></textarea>
+      <textarea id="input" placeholder="אפשר להקליד שאלה כאן ולערוך אותה לפני השליחה"></textarea>
       <button class="primary" id="send">שליחה</button>
     </div>
-    <div class="voice-status" id="voiceStatus"></div>
     <div class="examples" id="examples"></div>
   </section>
 
@@ -120,59 +137,146 @@ const EXAMPLES = [
   "עד מתי אפשר להגיש בקשת החזר על חיוב שגוי?", "כמה עולה חופשי חודשי לסטודנטים?", "לא עבד לי",
   "קיבלתי קנס למרות שתיקפתי, אני רוצה לערער",
 ];
-let sessionId = null, liveMode = false;
+let sessionId = null, liveMode = false, serverTts = null;
 const $ = id => document.getElementById(id);
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function pretty(s) { try { return JSON.stringify(JSON.parse(s), null, 1); } catch { return s; } }
 const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-// ---------- speech recognition (browser API, he-IL) ----------
+// ===================== conversation state machine =====================
+// idle -> listening -> thinking -> speaking -> idle. Every stage can be stopped with the stop button.
+let state = "idle";
+let requestSeq = 0;          // a stale response (after stop) is ignored by comparing this counter
+let inFlight = false;        // never send twice at the same time
+const STATE_TEXT = {
+  idle: "מוכן. לחצו על המיקרופון ודברו בעברית, או הקלידו שאלה.",
+  listening: "מאזין. דברו בעברית. השאלה תישלח אוטומטית כשתסיימו לדבר.",
+  thinking: "מחפש תשובה במסמכים ובכלי ה-MCP.",
+  speaking: "משמיע את הסיכום.",
+  blocked: "ההשמעה האוטומטית נחסמה על ידי הדפדפן. לחצו על \"השמעה\" ליד התשובה.",
+};
+function setState(s, text) {
+  state = s;
+  const bar = $("voicebar"); bar.className = "voicebar " + s;
+  $("voiceState").textContent = text || STATE_TEXT[s];
+  $("stopAll").hidden = (s === "idle" || s === "blocked");
+  $("mic").classList.toggle("active", s === "listening");
+  $("mic").textContent = s === "listening" ? "■" : "🎤";
+}
+function stopAll(reason) {
+  if (recog && recognizing) { try { recog.abort(); } catch {} }
+  recognizing = false;
+  requestSeq++;                       // any answer still in flight is ignored
+  inFlight = false;
+  stopSpeaking();
+  setState("idle", reason || "נעצר. " + STATE_TEXT.idle);
+}
+$("stopAll").addEventListener("click", () => stopAll());
+
+// ===================== speech recognition (he-IL) =====================
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recog = null, recognizing = false;
+let recog = null, recognizing = false, submittedThisTurn = false, lastTranscript = "";
 function initSpeech() {
-  if (!SR) { $("mic").disabled = true; $("mic").title = "זיהוי דיבור אינו נתמך בדפדפן זה"; setVoiceStatus("זיהוי דיבור אינו נתמך בדפדפן זה. אפשר להקליד."); return; }
+  if (!SR) { $("mic").disabled = true; $("mic").title = "זיהוי דיבור אינו נתמך בדפדפן זה"; setState("idle", "זיהוי דיבור אינו נתמך בדפדפן זה. אפשר להקליד."); return; }
   recog = new SR(); recog.lang = "he-IL"; recog.interimResults = true; recog.continuous = false; recog.maxAlternatives = 1;
   recog.onresult = e => {
-    let text = ""; let final = false;
-    for (const r of e.results) { text += r[0].transcript; if (r.isFinal) final = true; }
-    $("input").value = text;
-    setVoiceStatus(final ? "התמלול הסתיים. אפשר לתקן את הטקסט בתיבה ואז ללחוץ על שליחה." : "מתמלל…");
+    let text = "";
+    for (const r of e.results) text += r[0].transcript;
+    lastTranscript = text; $("input").value = text;
   };
-  recog.onerror = e => setVoiceStatus("שגיאת זיהוי דיבור: " + e.error + ". אפשר להקליד במקום.");
-  recog.onend = () => { recognizing = false; $("mic").textContent = "🎤"; $("mic").classList.remove("rec"); };
+  recog.onerror = e => {
+    recognizing = false;
+    if (e.error === "no-speech") setState("idle", "לא זוהה דיבור. אפשר לנסות שוב או להקליד.");
+    else if (e.error === "not-allowed" || e.error === "service-not-allowed") setState("idle", "הדפדפן לא אישר גישה למיקרופון. אפשר להקליד.");
+    else if (e.error !== "aborted") setState("idle", "שגיאת זיהוי דיבור: " + e.error + ". אפשר להקליד.");
+  };
+  // Chrome ends recognition on its own after a pause. The final transcript is submitted here, exactly once.
+  recog.onend = () => {
+    const wasListening = recognizing; recognizing = false;
+    if (wasListening && !submittedThisTurn && lastTranscript.trim()) {
+      submittedThisTurn = true;
+      send(lastTranscript, { fromVoice: true });
+    } else if (wasListening && state === "listening") {
+      setState("idle", "לא זוהה דיבור. אפשר לנסות שוב או להקליד.");
+    }
+  };
 }
-function setVoiceStatus(t) { $("voiceStatus").textContent = t; }
-function toggleRec() {
+function startListening() {
   if (!recog) return;
-  if (recognizing) { recog.stop(); return; }
-  $("input").value = ""; recognizing = true; $("mic").textContent = "■"; $("mic").classList.add("rec");
-  setVoiceStatus("מאזין. דברו בעברית. התמלול יופיע בתיבה ואפשר לתקן אותו לפני השליחה.");
-  try { recog.start(); } catch (e) { recognizing = false; setVoiceStatus("לא ניתן להפעיל זיהוי דיבור: " + e); }
+  stopSpeaking();
+  submittedThisTurn = false; lastTranscript = ""; $("input").value = "";
+  recognizing = true; setState("listening");
+  try { recog.start(); } catch (e) { recognizing = false; setState("idle", "לא ניתן להפעיל זיהוי דיבור: " + e); }
 }
-$("mic").addEventListener("click", toggleRec);
+$("mic").addEventListener("click", () => { if (state === "listening") stopAll(); else startListening(); });
 
-// ---------- text to speech (browser API, Hebrew voice if installed) ----------
+// ===================== text to speech =====================
+// 1) a Hebrew voice in the browser, if one is installed; 2) the local Piper voice through /api/tts, if the
+// server reports it; 3) otherwise no active play control. The engine is decided at runtime, not assumed.
 let heVoice = null;
-function pickVoice() {
+const player = new Audio();
+let currentUtterance = null;
+let activeSpeakResolve = null;   // resolver of the speak() promise in progress; stopSpeaking() settles it
+function pickBrowserVoice() {
   if (!("speechSynthesis" in window)) return;
-  const vs = speechSynthesis.getVoices();
-  heVoice = vs.find(v => (v.lang || "").toLowerCase().startsWith("he")) || null;
-  document.querySelectorAll("button.play").forEach(b => { b.disabled = !heVoice; b.title = heVoice ? "השמעת התשובה בעברית" : "אין קול עברי מותקן בדפדפן"; });
-  document.querySelectorAll(".tts-note").forEach(n => n.textContent = heVoice ? `קול: ${heVoice.name}` : "אין קול עברי מותקן בדפדפן, ולכן ההשמעה כבויה. הטקסט זמין.");
+  heVoice = speechSynthesis.getVoices().find(v => (v.lang || "").toLowerCase().startsWith("he")) || null;
+  refreshEngineNote();
 }
-if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-function speak(text) {
-  if (!("speechSynthesis" in window) || !heVoice) return;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text); u.voice = heVoice; u.lang = "he-IL"; u.rate = 1;
-  speechSynthesis.speak(u);
+if ("speechSynthesis" in window) { pickBrowserVoice(); speechSynthesis.onvoiceschanged = pickBrowserVoice; }
+function ttsEngine() { return heVoice ? "browser" : (serverTts && serverTts.engine === "piper" ? "piper" : null); }
+function refreshEngineNote() {
+  const eng = ttsEngine();
+  $("engineNote").textContent = eng === "browser" ? `קול: דפדפן (${heVoice.name})`
+    : eng === "piper" ? `קול: Piper מקומי (${serverTts.voice})`
+    : "אין קול עברי זמין בדפדפן או בשרת, ולכן ההשמעה כבויה. הטקסט זמין.";
+  document.querySelectorAll("button.play").forEach(b => { b.disabled = !eng; b.title = eng ? "השמעת הסיכום בעברית" : "אין קול עברי זמין"; });
 }
-function stopSpeak() { if ("speechSynthesis" in window) speechSynthesis.cancel(); }
+function settleSpeak(outcome) {
+  const r = activeSpeakResolve; activeSpeakResolve = null;
+  if (r) r(outcome);
+}
+function stopSpeaking() {
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  currentUtterance = null;
+  if (!player.paused) player.pause();
+  player.removeAttribute("src"); player.load();   // load() also drops pending media events, so settle explicitly
+  settleSpeak("stopped");
+}
+// Returns "played", "stopped", "blocked" or "unavailable". Resolves when playback ends or is stopped.
+async function speak(text, seq) {
+  const eng = ttsEngine();
+  if (!eng || !text) return "unavailable";
+  stopSpeaking();
+  if (eng === "browser") {
+    return new Promise(resolve => {
+      activeSpeakResolve = resolve;
+      const u = new SpeechSynthesisUtterance(text); u.voice = heVoice; u.lang = "he-IL"; u.rate = 1; currentUtterance = u;
+      let started = false;
+      u.onstart = () => { started = true; if (seq === requestSeq) setState("speaking"); };
+      u.onend = () => settleSpeak(started ? "played" : "blocked");
+      u.onerror = e => settleSpeak((e.error === "not-allowed") ? "blocked" : (started ? "played" : "blocked"));
+      speechSynthesis.speak(u);
+      setTimeout(() => { if (!started && !speechSynthesis.speaking && activeSpeakResolve === resolve) { speechSynthesis.cancel(); settleSpeak("blocked"); } }, 1500);
+    });
+  }
+  // Piper: fetch WAV from the local server and play it.
+  const res = await post("/api/tts", { text });
+  if (!res.ok) return "unavailable";
+  if (seq !== requestSeq) return "stopped";
+  const url = URL.createObjectURL(await res.blob());
+  return new Promise(resolve => {
+    activeSpeakResolve = resolve;
+    player.src = url;
+    player.onended = () => { URL.revokeObjectURL(url); settleSpeak("played"); };
+    player.play().then(() => { if (seq === requestSeq) setState("speaking"); })
+      .catch(err => { URL.revokeObjectURL(url); settleSpeak(err && err.name === "NotAllowedError" ? "blocked" : "unavailable"); });
+  });
+}
 
-// ---------- page ----------
+// ===================== page =====================
 async function loadMeta() {
   const m = await (await fetch("/api/meta")).json();
-  liveMode = m.mode === "live";
+  liveMode = m.mode === "live"; serverTts = m.tts || null;
   const sel = $("scenario"); sel.innerHTML = "";
   for (const [k, label] of Object.entries(m.scenarios)) {
     const o = document.createElement("option"); o.value = k; o.textContent = label; if (k === m.scenario) o.selected = true; sel.appendChild(o);
@@ -180,7 +284,7 @@ async function loadMeta() {
   $("mode").textContent = liveMode ? `מצב: מודל חי (${m.model}) והדגמה מודרכת` : "מצב: הדגמה ללא מודל. שאלות חופשיות עוברות במסלול דטרמיניסטי של אחזור וכלי MCP, ללא מפתח API.";
   $("meta").textContent = `${m.passages} פסקאות. כלי MCP: ${m.tools.join(", ")}`;
   $("examples").innerHTML = "";
-  for (const ex of EXAMPLES) { const b = document.createElement("button"); b.textContent = ex; b.onclick = () => { $("input").value = ex; send(); }; $("examples").appendChild(b); }
+  for (const ex of EXAMPLES) { const b = document.createElement("button"); b.textContent = ex; b.onclick = () => send(ex); $("examples").appendChild(b); }
   $("scenarios").innerHTML = "";
   for (const s of m.offline_scenarios) {
     const d = document.createElement("div"); d.className = "scenario";
@@ -188,14 +292,16 @@ async function loadMeta() {
     const b = document.createElement("button"); b.className = "primary"; b.textContent = "הרצת התרחיש"; b.onclick = () => runOffline(s.id, b);
     d.appendChild(b); $("scenarios").appendChild(d);
   }
+  refreshEngineNote();
 }
 $("scenario").addEventListener("change", async e => {
   await post("/api/scenario", { name: e.target.value });
   addMsg("bot", `תרחיש ההדגמה הוחלף ל: ${e.target.selectedOptions[0].textContent}. השינוי משפיע רק על מה שכלי get_service_status מחזיר.`);
 });
 $("newChat").addEventListener("click", async () => {
+  stopAll();
   if (sessionId) await post("/api/reset", { session_id: sessionId, message: "" });
-  sessionId = null; $("messages").innerHTML = ""; resetDev(); stopSpeak();
+  sessionId = null; $("messages").innerHTML = ""; resetDev();
 });
 
 function addMsg(kind, text) {
@@ -209,7 +315,9 @@ function renderBot(r) {
   let html = scripted
     ? `<span class="badge predefined">${escapeHtml(r.response_label_he)}</span>`
     : `<span class="badge model">תשובת מודל (${escapeHtml(r.model || "")})</span>`;
-  html += `<span class="badge ${r.action}">${ACTION_LABEL[r.action] || r.action}</span><div class="answer-text">${escapeHtml(r.answer_he)}</div>`;
+  html += `<span class="badge ${r.action}">${ACTION_LABEL[r.action] || r.action}</span>`;
+  if (r.spoken_summary_he) html += `<div class="spoken"><span class="lbl">סיכום מדובר (משפט או שניים מתוך התשובה, זה מה שמושמע):</span>${escapeHtml(r.spoken_summary_he)}</div>`;
+  html += `<div class="answer-text" style="margin-top:8px">${escapeHtml(r.answer_he)}</div>`;
   if (r.sources.length) {
     html += `<div class="sources">מקורות שאוחזרו בפועל (מסמכי הדגמה):` + r.sources.map(s =>
       `<details><summary>${escapeHtml(s.doc_title)} › ${escapeHtml(s.section_title)} <span class="muted">(${escapeHtml(s.id)}, גרסה ${escapeHtml(s.doc_version)})</span></summary><div class="excerpt">${escapeHtml(s.text)}</div></details>`).join("") + `</div>`;
@@ -220,10 +328,19 @@ function renderBot(r) {
   if (r.steps && r.steps.length) html += `<div class="steps">מה קרה בפועל:<ol>${r.steps.map(s => `<li>${escapeHtml(s.detail_he)}</li>`).join("")}</ol></div>`;
   html += `<div class="tts"><button class="play">▶ השמעה</button><button class="stop">■ עצירה</button><span class="tts-note"></span></div>`;
   d.innerHTML = html;
-  d.querySelector("button.play").onclick = () => speak(r.answer_he);
-  d.querySelector("button.stop").onclick = stopSpeak;
+  const note = d.querySelector(".tts-note");
+  d.querySelector("button.play").onclick = async () => {
+    const seq = ++requestSeq;
+    const outcome = await speak(r.spoken_summary_he || r.answer_he, seq);
+    if (seq !== requestSeq) return;
+    if (outcome === "blocked") { note.textContent = "הדפדפן חסם את ההשמעה."; setState("blocked"); }
+    else if (outcome === "unavailable") { note.textContent = "אין קול עברי זמין."; setState("idle"); }
+    else setState("idle");
+  };
+  d.querySelector("button.stop").onclick = () => stopAll();
   $("messages").appendChild(d); $("messages").scrollTop = $("messages").scrollHeight;
-  pickVoice();
+  refreshEngineNote();
+  return d;
 }
 
 function resetDev() { $("devMeta").textContent = "עדיין לא הורץ תרחיש."; $("flags").innerHTML = '<span class="muted">אין</span>'; $("tools").innerHTML = '<span class="muted">אין</span>'; $("hits").innerHTML = '<span class="muted">אין</span>'; $("raw").textContent = "אין"; }
@@ -248,41 +365,63 @@ async function loadCases() {
 }
 $("refreshCases").addEventListener("click", loadCases);
 
+// After a reply: try to speak the summary automatically; explain when the browser blocks it.
+async function afterReply(r, seq) {
+  if (!r.spoken_summary_he || !ttsEngine()) { setState("idle"); return; }
+  const outcome = await speak(r.spoken_summary_he, seq);
+  if (seq !== requestSeq) return;
+  if (outcome === "blocked") setState("blocked");
+  else if (outcome === "unavailable") setState("idle", "ההשמעה לא זמינה כרגע. הטקסט מוצג למעלה.");
+  else setState("idle");
+}
+
 async function runOffline(id, btn) {
+  if (inFlight) return;
   if (btn) btn.disabled = true;
+  const seq = ++requestSeq; inFlight = true; stopSpeaking(); setState("thinking");
   try {
     const res = await post("/api/offline/run", { scenario_id: id });
     const body = await res.json();
-    if (!res.ok) { addMsg("err", body.detail || "שגיאה"); return; }
+    if (seq !== requestSeq) return;
+    if (!res.ok) { addMsg("err", body.detail || "שגיאה"); setState("idle"); return; }
     addMsg("user", body.question); renderBot(body); renderDev(body); loadCases();
     const m = await (await fetch("/api/meta")).json(); $("scenario").value = m.scenario;
-  } catch (e) { addMsg("err", "שגיאת רשת: " + e); }
-  finally { if (btn) btn.disabled = false; }
+    inFlight = false;
+    await afterReply(body, seq);
+  } catch (e) { if (seq === requestSeq) { addMsg("err", "שגיאת רשת: " + e); setState("idle"); } }
+  finally { inFlight = false; if (btn) btn.disabled = false; }
 }
 
-async function send() {
-  const text = $("input").value.trim(); if (!text) return;
-  if (recognizing && recog) recog.stop();
-  $("input").value = ""; setVoiceStatus(""); addMsg("user", text);
+// One entry point for typed, example and spoken questions. `text` wins over the text box when given.
+async function send(text, opts) {
+  const question = (text !== undefined ? text : $("input").value).trim();
+  if (!question || inFlight) return;
+  const seq = ++requestSeq; inFlight = true;
+  $("input").value = ""; stopSpeaking();
+  addMsg("user", question);
+  setState("thinking", (opts && opts.fromVoice) ? "התמלול נשלח. מחפש תשובה במסמכים ובכלי ה-MCP." : STATE_TEXT.thinking);
   const thinking = addMsg("bot", "…"); $("send").disabled = true;
   try {
-    const res = await post(liveMode ? "/api/chat" : "/api/offline/ask", { session_id: sessionId, message: text });
+    const res = await post(liveMode ? "/api/chat" : "/api/offline/ask", { session_id: sessionId, message: question });
     const body = await res.json(); thinking.remove();
-    if (!res.ok) { addMsg("err", body.detail || "שגיאה"); return; }
+    if (seq !== requestSeq) return;                       // stopped meanwhile
+    if (!res.ok) { addMsg("err", body.detail || "שגיאה"); setState("idle"); return; }
     sessionId = body.session_id; renderBot(body); renderDev(body); if (body.case) loadCases();
-  } catch (e) { thinking.remove(); addMsg("err", "שגיאת רשת: " + e); }
-  finally { $("send").disabled = false; }
+    inFlight = false; $("send").disabled = false;      // typing is allowed again while the summary is spoken
+    await afterReply(body, seq);
+  } catch (e) { thinking.remove(); if (seq === requestSeq) { addMsg("err", "שגיאת רשת: " + e); setState("idle"); } }
+  finally { inFlight = false; $("send").disabled = false; }
 }
-$("send").addEventListener("click", send);
+$("send").addEventListener("click", () => send());
 $("input").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
 
 (async () => {
   initSpeech();
   await loadMeta(); loadCases();
-  // Deep links used for screenshots and quick demos: ?autorun=payment_rag,status_mcp  and/or  ?ask=<question>
+  // Deep links used for screenshots and quick checks: ?autorun=payment_rag,status_mcp  and/or  ?ask=<question>
   const params = new URLSearchParams(location.search);
   for (const id of (params.get("autorun") || "").split(",").filter(Boolean)) await runOffline(id, null);
-  if (params.get("ask")) { $("input").value = params.get("ask"); await send(); }
+  if (params.get("ask")) await send(params.get("ask"));
 })();
 </script>
 </body>

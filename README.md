@@ -89,13 +89,16 @@ app/
   offline_demo.py    three guided scenarios (real retrieval, real MCP calls, predefined labelled replies)
   offline_workflow.py deterministic free question workflow (rules, quotes, MCP; no model)
   redact.py          removes card numbers, identity numbers and keyword-marked secrets before a case is prepared
+  tts.py             optional local Hebrew speech with Piper (used by POST /api/tts when the voice is installed)
   agent.py           optional Claude mode (tool loop and validation)
   prompts.py         system prompt for the optional Claude mode
   rag.py             Markdown loader, heading chunker, Hebrew tokenizer, BM25 with field weights
   mcp_client.py      spawns the MCP server, discovers tools, forwards calls, logs them
   config.py          paths, thresholds, model settings
-  static/index.html  Hebrew RTL interface, speech recognition, text to speech, developer panel
+  static/index.html  Hebrew RTL interface, voice flow (listen, search, speak, stop), developer panel
 mcp_server/          MCP server and demo_status.json (demo_cases.json is created at runtime and git-ignored)
+voices/              README with the optional Piper voice setup (model files are git-ignored)
+requirements-voice.txt  the optional piper-tts dependency
 docs/                seven demo guidance documents (Hebrew), a README about them, and the screenshot
 eval/                cases.json, run_eval.py, results.md (measured output of the last run)
 tests/               test_agent_offline.py (the optional Claude loop with a stub model and the real MCP server)
@@ -145,6 +148,16 @@ python -m tests.test_redaction
 Deep links: `/?autorun=payment_rag,status_mcp,handoff_mcp` runs the guided cards, and `/?ask=<question>` submits
 a free question.
 
+Optional local Hebrew voice (about 63 MB, non-commercial licence; details in section 7):
+
+```bash
+pip install -r requirements-voice.txt
+```
+
+```bash
+python -m piper.download_voices --download-dir voices he_IL-saspeech-medium
+```
+
 ## 6. Using it
 
 The page has three guided cards at the top and a text box below them.
@@ -174,23 +187,67 @@ the status could not be verified.
 
 ## 7. Voice interface
 
-- **Speech to text.** The microphone button uses the browser's Web Speech API (`SpeechRecognition`) with the
-  language set to `he-IL`. The transcript is written into the text box as you speak. You can correct it and then
-  press send. When the API is missing, the button is disabled with an explanation and typing works as before.
-- **Text to speech.** Each reply has play and stop controls that use `speechSynthesis` with a Hebrew voice if
-  one is installed in the browser. Without a Hebrew voice the play control is disabled and the reply says so.
-- A spoken question is handled exactly like a typed one. It goes through the same retrieval and MCP workflow,
-  and it is not mapped to one of the guided cards.
+The page offers a hands free flow on top of the text workflow. It is the same workflow: a spoken question is
+sent to the same endpoint as a typed one, goes through the same retrieval and MCP calls, and is never mapped to
+one of the guided cards.
 
-**Verification status.** The controls are implemented, but real microphone capture and audible Hebrew playback
-have not yet been verified in a normal browser. In the embedded Chromium browser used during development, the
-`SpeechRecognition` API was present and the microphone button was active. Pressing it requested the microphone,
-which that environment blocks, and the page showed "שגיאת זיהוי דיבור: not-allowed" with the typing fallback
-still working. `speechSynthesis` was present with three English voices and no Hebrew voice, so the play control
-was correctly disabled. The workflow behind the voice controls was exercised by submitting spoken style questions
-through the same text box. This project should not be described as a verified conversational voice agent. It is
-a text workflow with voice input and output controls that still need a check in a regular Chrome or Edge window
-with microphone permission and an installed Hebrew voice.
+**Flow.** One press on the microphone starts listening in Hebrew (`SpeechRecognition`, `he-IL`). The transcript
+appears in the text box while you speak. When the browser reports the final transcript, the question is sent
+automatically, exactly once (a per turn guard prevents a second submission; sending is also refused while a
+request is in flight). A status bar shows the stage: listening, searching for an answer, speaking, or a note that
+the browser blocked automatic playback. A stop button is visible in every active stage and cancels listening,
+ignores a reply that is still on its way, and stops playback. Typing and editing a question by hand keeps working
+at all times, and the microphone button is disabled with an explanation in browsers without the API.
+
+**Spoken summary.** Every reply carries a `spoken_summary_he`: one to three sentences copied verbatim from the on
+screen reply (the live status sentence, the handoff sentence, the first sentence of the top quoted passage, the
+"not supported" notice, or the clarifying question itself). Only the summary is spoken; the full reply, the
+sources and the step log stay on screen. The evaluation checks for every reply that the summary exists, has at
+most three sentences, and that each sentence appears verbatim in the reply, so speech can never claim more than
+the text does. For questions without enough information the summary is a short clarifying question or the
+"not supported" sentence, never an invented answer.
+
+**Which voice speaks.** The engine is decided at runtime, in this order:
+
+1. A Hebrew voice installed in the browser (`speechSynthesis`, language `he-*`), if present.
+2. Otherwise the local Piper voice through `POST /api/tts`, if the server has it (see below).
+3. Otherwise no active play control: the play button is disabled, the bar says no Hebrew voice is available, and
+   the text stays usable.
+
+After a reply the summary is played automatically. If the browser blocks automatic playback (Chrome does this
+when the page has had no user interaction), the bar explains it and the play button next to the reply plays the
+summary with one click.
+
+**Local Hebrew voice with Piper.** No Hebrew voice is installed in Windows or Chrome on the development machine
+(only the English voices David, Zira and Mark), so the browser engine is not available there. The piper-voices
+collection does contain a Hebrew voice, `he_IL-saspeech-medium`, and `piper-tts` 1.8 synthesises plain unvoweled
+Hebrew by restoring vowel points with a bundled Nakdimon model first. Setup and licence facts are in
+[`voices/README.md`](voices/README.md). Two licence facts matter: `piper-tts` is GPL-3.0-or-later, and the voice
+was trained on the SASPEECH corpus (openslr.org/134), whose licence is a custom non-commercial licence with the
+Israeli Public Broadcasting Corporation as copyright owner. This demo is non-commercial; the voice must not be
+used in a commercial product. Measured on the development machine (CPU only): first call 1.1 s including model
+load, later calls 0.16 to 0.34 s for sentences of 40 to 70 characters producing 3 to 4 s of audio.
+
+**What was verified, and where** (embedded Chromium 148 browser inside the development tool, Windows 11,
+2026-09-15, Piper engine active on the server):
+
+| Check | Result |
+|---|---|
+| Payment question typed and sent | Reply with the payment passage; the summary (the first sentence of the passage) was fetched from `/api/tts` and played to the end, 7.4 s of audio, one `POST /api/offline/ask` in the server log |
+| Service status question with the feed set to "segment closed" | `get_service_status` was called for ארלוזורוב; the summary was the two status sentences from the tool result; state moved from "searching" to "speaking" |
+| Fine appeal (handoff) | `prepare_support_case` was called, case `DEMO-0002` shown; playback was stopped after 3.2 s of 6.0 s with the stop button; state returned to idle, playback paused, the send button re-enabled |
+| Price question (no information) | "Not supported" reply; the summary was the "no price information" sentence and played to the end |
+| Triple click on send with one question | One user message, one reply, one request in the server log |
+| Microphone button | The API is present; the click requested the microphone, which the embedded browser blocks, and the bar showed the "not allowed" explanation with typing still available |
+
+**Not yet verified.** Real microphone capture, the automatic submission after a real spoken sentence, and
+audible playback in a normal browser have not been verified: the Claude in Chrome extension was not connected on
+the development machine, so the flow could not be driven in a regular Chrome window, and the embedded browser
+blocks the microphone and has no speakers check. Audio quality of the Piper voice was not judged by ear in this
+repository; sample WAV files can be produced with `python -m piper -m voices/he_IL-saspeech-medium.onnx`. To
+verify on your machine: open the page in Chrome, allow the microphone, press the microphone button, ask a question
+in Hebrew, and confirm that it is sent once, that the summary is heard, and that the stop button interrupts it.
+This project is a text workflow with voice input and output controls, not a verified conversational voice agent.
 
 ## 8. What was measured
 
@@ -253,9 +310,12 @@ Part B. This mode has not been evaluated in this repository, and Part B is repor
   (`refunds_v2` and `refunds_v1_old`).
 - **Lexical retrieval.** BM25 with light normalisation and a hand written synonym list. Embeddings or hybrid
   retrieval would improve recall on free form Hebrew.
-- **Voice depends on the browser.** Recognition needs a browser that implements the Web Speech API and
-  microphone permission. Hebrew text to speech needs an installed Hebrew voice. Neither has been verified in a
-  normal browser yet.
+- **Voice depends on the browser and on an optional local voice.** Recognition needs a browser that implements
+  the Web Speech API and microphone permission; in Chrome the audio is processed by the browser vendor's service.
+  Hebrew playback needs either a Hebrew browser voice or the optional Piper voice, whose dataset licence is
+  non-commercial. Real microphone capture and audible playback have not been verified in a normal browser yet.
+- **Spoken summaries are extracts, not summaries in the language sense.** They are sentences copied from the
+  reply, chosen by fixed rules. They are always faithful to the reply, but they can be blunt or incomplete.
 - **Demo cases are local.** They are written to `mcp_server/demo_cases.json` and nowhere else.
 - **Single process, in memory sessions.** Restarting the server clears conversation history. There is no
   streaming.

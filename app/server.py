@@ -1,6 +1,7 @@
 """FastAPI app: serves the Hebrew UI and a small JSON API around the agent."""
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -8,10 +9,10 @@ from pathlib import Path
 
 import anthropic
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
-from . import config
+from . import config, tts
 from .agent import Agent
 from .mcp_client import MCPBridge
 from .offline_demo import list_scenarios, run_scenario
@@ -79,6 +80,7 @@ async def meta():
         "model": config.MODEL_ID if config.has_api_key() else None,
         "api_key_present": config.has_api_key(),
         "offline_scenarios": list_scenarios(),
+        "tts": tts.info(),
         "passages": state["retriever"].N,
         "docs": sorted({(p.doc_id, p.doc_title, p.doc_version) for p in state["retriever"].passages}),
         "tools": [t["name"] for t in state["bridge"].tools],
@@ -131,6 +133,22 @@ async def offline_ask(body: ChatIn):
     history.append({"role": "assistant", "content": result["answer_he"]})
     scenario = read_status_file()["active_scenario"]
     return JSONResponse({"session_id": sid, "scenario": scenario, "status_scenario": scenario, **result})
+
+
+class TtsIn(BaseModel):
+    text: str
+
+
+@app.post("/api/tts")
+async def api_tts(body: TtsIn):
+    """Local Hebrew speech with Piper (optional). Returns a WAV. 503 when the voice is not installed."""
+    if not tts.available():
+        raise HTTPException(503, "Local Hebrew voice not installed. See README, section Voice interface.")
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "empty text")
+    data = await asyncio.to_thread(tts.synthesize_wav, text)
+    return Response(content=data, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/reset")

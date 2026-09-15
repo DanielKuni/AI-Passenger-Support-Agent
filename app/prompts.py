@@ -45,6 +45,7 @@ OUTPUT FORMAT: respond with a single JSON object and nothing else:
 {
   "action": "answer" | "clarify" | "handoff" | "unsupported",
   "answer_he": "<the Hebrew reply to the passenger>",
+  "spoken_summary_he": "<one or two sentences copied verbatim from answer_he, for text-to-speech>",
   "sources": ["<passage id>", ...],        // only ids that appear in <passages>; [] if none used
   "used_status_tool": true | false,
   "note": "<optional one-line English note for the developer panel, e.g. why unsupported or which conflict>"

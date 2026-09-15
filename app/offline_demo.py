@@ -39,6 +39,7 @@ SCENARIOS: list[dict] = [
             "אפשר לשלם בכרטיס רב-קו טעון, בכרטיס אשראי או חיוב עם תשלום ללא מגע (הצמדה לקורא בכניסה וביציאה), "
             "או באפליקציית תשלום מאושרת."
         ),
+        "spoken_template_he": "לא. לפי מסמך ההדגמה \"אמצעי תשלום ותיקוף\", לא ניתן לשלם במזומן בתחנות או ברכבת.",
     },
     {
         "id": "status_mcp",
@@ -53,6 +54,7 @@ SCENARIOS: list[dict] = [
             "לפי מערכת מצב השירות (נתוני הדגמה, נבדקו כעת): {status_summary} {status_alternative} "
             "לפי מסמך המדיניות (הדגמה), הנסיעה באוטובוס החלופי אינה כרוכה בתשלום נוסף למי שכבר תיקף בקו האדום."
         ),
+        "spoken_template_he": "לפי מערכת מצב השירות (נתוני הדגמה, נבדקו כעת): {status_summary} {status_alternative}",
     },
     {
         "id": "handoff_mcp",
@@ -76,6 +78,7 @@ SCENARIOS: list[dict] = [
             "הפנייה נשמרת במערכת ההדגמה בלבד ואינה נשלחת לצוות שירות אמיתי. "
             "בפנייה אמיתית כדאי לצרף תחנה, שעה ואמצעי התשלום שבו תיקפת. אני לא יכול לקבוע אם הקנס יבוטל."
         ),
+        "spoken_template_he": "ערעור על קנס מטופל על ידי נציג אנושי בלבד, ולכן הוכנה פניית הדגמה מספר {case_id}. הפנייה נשמרת במערכת ההדגמה בלבד ואינה נשלחת לצוות שירות אמיתי.",
     },
 ]
 
@@ -138,10 +141,12 @@ async def run_scenario(scenario_id: str, retriever: BM25Retriever, bridge: MCPBr
     # 4. Predefined response (never a model).
     if tool_error:
         answer = f"כלי ה-MCP החזיר שגיאה, ולכן אין תשובה מוגדרת מראש לתרחיש זה: {tool_error}"
+        spoken = "כלי ה-MCP החזיר שגיאה, ולכן אין תשובה מוגדרת מראש לתרחיש זה."
         action = "unsupported"
         flags.append("mcp_tool_error")
     else:
         answer = s["response_template_he"].format(**fill).replace("  ", " ").strip()
+        spoken = s["spoken_template_he"].format(**fill).replace("  ", " ").strip()
         action = s["action"]
     steps.append({"step": "predefined_response", "detail_he": PREDEFINED_LABEL_HE})
 
@@ -163,6 +168,7 @@ async def run_scenario(scenario_id: str, retriever: BM25Retriever, bridge: MCPBr
         "status_scenario": s["status_scenario"],
         "action": action,
         "answer_he": answer,
+        "spoken_summary_he": spoken,
         "note": "predefined demo response; no model call",
         "sources": sources,
         "retrieved": retrieved,

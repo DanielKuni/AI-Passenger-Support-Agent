@@ -150,9 +150,19 @@ class Agent:
             except json.JSONDecodeError:
                 case = {"raw": case_calls[-1]["output"]}
 
+        # Spoken summary must be verbatim from the reply; otherwise fall back to the reply's first sentences.
+        from .offline_workflow import first_sentences
+        answer_he = parsed.get("answer_he", "") or ""
+        spoken = parsed.get("spoken_summary_he") or ""
+        if not spoken or " ".join(spoken.split()) not in " ".join(answer_he.split()):
+            spoken = first_sentences(answer_he, 2)
+            if parsed.get("spoken_summary_he"):
+                flags.append("spoken_summary_not_verbatim")
+
         return {
             "action": action,
-            "answer_he": parsed.get("answer_he", ""),
+            "answer_he": answer_he,
+            "spoken_summary_he": spoken,
             "note": parsed.get("note", ""),
             "sources": sources,
             "retrieved": retrieved,

@@ -212,7 +212,7 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     if conflict:
         parts.append("שימו לב: במסמכי ההדגמה נמצאו שתי גרסאות סותרות בנושא זה. שתיהן מצוטטות כאן, ונדרש אימות של נציג.")
     for p in quotes:
-        parts.append(f"לפי מסמך ההדגמה \"{p['doc_title']}\" (סעיף \"{p['section_title']}\"): {' '.join(p['text'].split())}")
+        parts.append(f"לפי מסמך ההדגמה \"{p['doc_title']}\" (סעיף \"{p['section_title']}\"): {flatten_passage(p['text'])}")
     if case:
         parts.append(f"נושא זה מטופל על ידי נציג אנושי, ולכן הוכנה פניית הדגמה מספר {case.get('case_id', '')}. "
                      "הפנייה כוללת רק את מה שנמסר בשאלה. היא נשמרת במערכת ההדגמה בלבד ואינה נשלחת לצוות שירות אמיתי.")
@@ -240,7 +240,48 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
         action = "answer"
     steps.append({"step": "templated_response", "detail_he": LABEL_HE})
     tool_calls = bridge.call_log[log_start:]
-    return _result(question, action, " ".join(parts), quotes, retrieved, tool_calls, case, flags, steps, original)
+    answer = " ".join(parts)
+
+    # Spoken summary: one to three sentences taken verbatim from the reply, so speech can never say more than
+    # the text does. Preference: redaction notice, live status, handoff; otherwise the first sentence of the top
+    # quote, or of the "unsupported" notice.
+    summary: list[str] = []
+    if redacted:
+        summary.append(first_sentences(parts[0], 1))
+    if status_text:
+        summary.append(first_sentences(status_text, 2))
+    if case:
+        summary.append(first_sentences(next(p for p in parts if "פניית הדגמה" in p), 1))
+    elif not status_text:
+        if action == "unsupported":
+            summary.append(first_sentences(parts[-1], 1))
+        elif quotes:
+            summary.append(first_sentences(flatten_passage(quotes[0]["text"]), 1, join_after_colon=True))
+    spoken = " ".join(s for s in summary if s)
+    return _result(question, action, answer, quotes, retrieved, tool_calls, case, flags, steps, original, spoken)
+
+
+# A sentence ends at . ! or ? followed by whitespace, except after a bare list number such as "1." so numbered
+# steps are spoken as whole sentences.
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[^0-9][.!?])\s+")
+
+
+def flatten_passage(text: str) -> str:
+    """Passage text on one line, without Markdown list markers, so it reads and speaks naturally."""
+    text = re.sub(r"(?m)^\s*-\s+", "", text)
+    return " ".join(text.split())
+
+
+def first_sentences(text: str, n: int, join_after_colon: bool = False) -> str:
+    """The first n sentences of text, verbatim (whitespace collapsed). A sentence that ends with a colon is
+    joined with the next one so a list introduction is not spoken on its own."""
+    text = " ".join(text.split())
+    out: list[str] = []
+    for s in SENTENCE_SPLIT_RE.split(text):
+        out.append(s)
+        if len(out) >= n and not (join_after_colon and s.endswith(":")):
+            break
+    return " ".join(out)
 
 
 def _question_hits_missing_sentence(question: str, quotes: list[dict]) -> bool:
@@ -254,8 +295,11 @@ def _question_hits_missing_sentence(question: str, quotes: list[dict]) -> bool:
     return False
 
 
-def _result(question, action, answer, sources, retrieved, tool_calls, case, flags, steps, original=None) -> dict:
+def _result(question, action, answer, sources, retrieved, tool_calls, case, flags, steps, original=None, spoken=None) -> dict:
+    if spoken is None:
+        spoken = first_sentences(answer, 2)   # clarification questions: the question itself is the summary
     return {
+        "spoken_summary_he": spoken,
         "mode": "offline_workflow",
         "response_kind": "templated",
         "response_label_he": LABEL_HE,

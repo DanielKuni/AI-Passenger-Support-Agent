@@ -55,9 +55,32 @@ def retrieval_eval(retriever: BM25Retriever) -> list[dict]:
     return rows
 
 
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[^0-9][.!?])\s+")   # same rule as app/offline_workflow.py
+
+
+def spoken_summary_failures(r: dict) -> list[str]:
+    """Global rule for every reply: a spoken summary exists, is short, and every sentence of it appears verbatim
+    in the on-screen reply, so speech can never claim more than the text does."""
+    failed = []
+    spoken = " ".join((r.get("spoken_summary_he") or "").split())
+    answer = " ".join((r.get("answer_he") or "").split())
+    if not spoken:
+        return ["spoken_summary missing"]
+    sentences = [s for s in SENTENCE_SPLIT_RE.split(spoken) if s]
+    if len(sentences) > 3:
+        failed.append(f"spoken_summary has {len(sentences)} sentences (max 3)")
+    if len(spoken) > 400:
+        failed.append(f"spoken_summary too long ({len(spoken)} chars)")
+    for s in sentences:
+        if s not in answer:
+            failed.append("spoken_summary sentence not verbatim in reply")
+            break
+    return failed
+
+
 def check_case(c: dict, r: dict) -> list[str]:
     """Return a list of failed check names (empty = pass)."""
-    failed = []
+    failed = spoken_summary_failures(r)
     ans = r["answer_he"] or ""
     called = {t["tool"] for t in r["tool_calls"] if not t["is_error"]} | {t["tool"] for t in r["tool_calls"]}
     cited_docs = {s["doc_id"] for s in r["sources"]}
@@ -169,6 +192,7 @@ async def offline_demo_eval(retriever: BM25Retriever) -> list[dict]:
                 failed.append("unfilled template placeholder")
             if r["flags"]:
                 failed.append(f"flags {r['flags']}")
+            failed += spoken_summary_failures(r)
             rows.append({"id": s["id"], "passed": not failed, "failed": failed, "action": r["action"],
                          "tools": [c["tool"] for c in r["tool_calls"]], "sources": [x["id"] for x in r["sources"]],
                          "case_id": (r["case"] or {}).get("case_id"), "answer_he": r["answer_he"]})
