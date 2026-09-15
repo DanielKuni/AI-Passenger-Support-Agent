@@ -30,7 +30,9 @@ from app import config  # noqa: E402
 from app.rag import BM25Retriever, load_passages  # noqa: E402
 
 EVAL_DIR = Path(__file__).resolve().parent
-CASES = json.loads((EVAL_DIR / "cases.json").read_text(encoding="utf-8"))["cases"]
+ALL_CASES = [c for c in json.loads((EVAL_DIR / "cases.json").read_text(encoding="utf-8"))["cases"] if not c.get("skip")]
+CASES = [c for c in ALL_CASES if not c.get("holdout")]          # the original 24 (used while tuning the offline rules)
+HOLDOUT_CASES = [c for c in ALL_CASES if c.get("holdout")]      # paraphrases written afterwards; never used for tuning
 
 
 def set_scenario(name: str) -> None:
@@ -165,8 +167,8 @@ async def offline_demo_eval(retriever: BM25Retriever) -> list[dict]:
     return rows
 
 
-async def offline_workflow_eval(retriever: BM25Retriever) -> list[dict]:
-    """Part D: all 24 cases through the deterministic offline workflow (free-form path), same checks as Part B."""
+async def offline_workflow_eval(retriever: BM25Retriever, cases: list[dict]) -> list[dict]:
+    """Parts D/E: cases through the deterministic offline workflow (free-form path), same checks as Part B."""
     from app.mcp_client import MCPBridge
     from app.offline_workflow import run_free_question
 
@@ -174,7 +176,7 @@ async def offline_workflow_eval(retriever: BM25Retriever) -> list[dict]:
     await bridge.start()
     rows = []
     try:
-        for c in CASES:
+        for c in cases:
             set_scenario(c.get("scenario", "normal"))
             history: list[dict] = []
             result = None
@@ -194,8 +196,31 @@ async def offline_workflow_eval(retriever: BM25Retriever) -> list[dict]:
     return rows
 
 
+def _workflow_section(title: str, rows: list[dict] | None, intro: str) -> list[str]:
+    L = ["", f"## {title}", ""]
+    if rows is None:
+        return L + ["**Not run.**", ""]
+    passed = sum(r["passed"] for r in rows)
+    L += [f"**{passed}/{len(rows)} cases passed all their checks.** {intro}", ""]
+    cats: dict[str, list] = {}
+    for r in rows:
+        cats.setdefault(r["category"], []).append(r["passed"])
+    L += ["| category | passed |", "|---|---|"]
+    for k, v in cats.items():
+        L.append(f"| {k} | {sum(v)}/{len(v)} |")
+    L += ["", "| case | category | scenario | expected action | got | tools called | result |", "|---|---|---|---|---|---|---|"]
+    for r in rows:
+        res = "PASS" if r["passed"] else "FAIL: " + "; ".join(r["failed"])
+        L.append(f"| {r['id']} | {r['category']} | {r.get('scenario','')} | {', '.join(r.get('expected_actions') or [])} | {r['action']} | {', '.join(r['tools']) or '-'} | {res} |")
+    L += ["", "### Templated replies (for manual reading)", ""]
+    for r in rows:
+        L += [f"**{r['id']}** ({r['action']}; sources {r.get('sources')})", "", f"> {r['answer_he'].replace(chr(10), ' ')}", ""]
+    return L
+
+
 def write_report(retrieval_rows: list[dict], agent_rows: list[dict] | None, skipped_reason: str | None,
-                 offline_rows: list[dict] | None = None, workflow_rows: list[dict] | None = None) -> None:
+                 offline_rows: list[dict] | None = None, workflow_rows: list[dict] | None = None,
+                 holdout_rows: list[dict] | None = None) -> None:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     L = [f"# Evaluation results", "", f"Generated: {now}  ", f"Model: `{config.MODEL_ID}` (effort `{config.EFFORT}`)  ",
          f"Cases: {len(CASES)} in `eval/cases.json`", "",
@@ -241,28 +266,18 @@ def write_report(retrieval_rows: list[dict], agent_rows: list[dict] | None, skip
               "| scenario | action | MCP tools called | sources validated | case id | result |", "|---|---|---|---|---|---|"]
         for r in offline_rows:
             L.append(f"| {r['id']} | {r['action']} | {', '.join(r['tools']) or '-'} | {', '.join(r['sources'])} | {r['case_id'] or '-'} | {'PASS' if r['passed'] else 'FAIL: ' + '; '.join(r['failed'])} |")
-    L += ["", "## Part D - deterministic offline workflow on all 24 cases (free-form path, no model, no API key)", ""]
-    if workflow_rows is None:
-        L += ["**Not run.**", ""]
-    else:
-        passed = sum(r["passed"] for r in workflow_rows)
-        L += [f"**{passed}/{len(workflow_rows)} cases passed all their checks.** The checks were written for the model-driven agent; "
-              "this part shows how far regex rules + BM25 quotes + real MCP calls get without a model. Failures are listed as measured.", ""]
-        cats: dict[str, list] = {}
-        for r in workflow_rows:
-            cats.setdefault(r["category"], []).append(r["passed"])
-        L += ["| category | passed |", "|---|---|"]
-        for k, v in cats.items():
-            L.append(f"| {k} | {sum(v)}/{len(v)} |")
-        L += ["", "| case | category | scenario | expected action | got | tools called | result |", "|---|---|---|---|---|---|---|"]
-        for r in workflow_rows:
-            res = "PASS" if r["passed"] else "FAIL: " + "; ".join(r["failed"])
-            L.append(f"| {r['id']} | {r['category']} | {r.get('scenario','')} | {', '.join(r.get('expected_actions') or [])} | {r['action']} | {', '.join(r['tools']) or '-'} | {res} |")
-        L += ["", "### Templated replies (for manual reading)", ""]
-        for r in workflow_rows:
-            L += [f"**{r['id']}** ({r['action']}; sources {r.get('sources')})", "", f"> {r['answer_he'].replace(chr(10), ' ')}", ""]
+    L += _workflow_section(
+        f"Part D - deterministic offline workflow on the original {len(CASES)} cases (free-form path, no model, no API key)",
+        workflow_rows,
+        "The checks were written for the model-driven agent; this part shows how far regex rules + BM25 quotes + real MCP calls "
+        "get without a model. These cases were available while the rules and the quote threshold were being set, so this is not a blind test.")
+    L += _workflow_section(
+        f"Part E - holdout paraphrases ({len(HOLDOUT_CASES)} new questions written after the rules were fixed; never used for tuning)",
+        holdout_rows,
+        "Same workflow and same kind of checks as Part D, on questions that were not seen while tuning.")
     (EVAL_DIR / "results.md").write_text("\n".join(L), encoding="utf-8")
-    (EVAL_DIR / "results_raw.json").write_text(json.dumps({"retrieval": retrieval_rows, "agent": agent_rows, "offline_demo": offline_rows, "offline_workflow": workflow_rows}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (EVAL_DIR / "results_raw.json").write_text(json.dumps({"retrieval": retrieval_rows, "agent": agent_rows, "offline_demo": offline_rows,
+                                                            "offline_workflow": workflow_rows, "holdout": holdout_rows}, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\nwrote {EVAL_DIR / 'results.md'}")
 
 
@@ -270,17 +285,18 @@ def main() -> None:
     retriever = BM25Retriever(load_passages(config.DOCS_DIR))
     retrieval_rows = retrieval_eval(retriever)
     print(f"Part A retrieval: {sum(r['hit'] for r in retrieval_rows)}/{len(retrieval_rows)} hit@{config.TOP_K}")
-    agent_rows, skipped, offline_rows, workflow_rows = None, None, None, None
+    agent_rows, skipped, offline_rows, workflow_rows, holdout_rows = None, None, None, None, None
     if "--retrieval-only" not in sys.argv:
         offline_rows = asyncio.run(offline_demo_eval(retriever))
-        workflow_rows = asyncio.run(offline_workflow_eval(retriever))
+        workflow_rows = asyncio.run(offline_workflow_eval(retriever, CASES))
+        holdout_rows = asyncio.run(offline_workflow_eval(retriever, HOLDOUT_CASES))
     if "--retrieval-only" in sys.argv:
         skipped = "Skipped by --retrieval-only."
     elif not config.has_api_key():
         skipped = "ANTHROPIC_API_KEY is not set (this project is presented in offline demo mode). Add a key to .env and run `python -m eval.run_eval` to measure it."
     else:
         agent_rows = asyncio.run(agent_eval(retriever))
-    write_report(retrieval_rows, agent_rows, skipped, offline_rows, workflow_rows)
+    write_report(retrieval_rows, agent_rows, skipped, offline_rows, workflow_rows, holdout_rows)
 
 
 if __name__ == "__main__":

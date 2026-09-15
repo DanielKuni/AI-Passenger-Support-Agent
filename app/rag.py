@@ -7,6 +7,11 @@ Minimal, inspectable RAG layer.
     * final letters normalised (ך ם ן ף ץ -> כ מ נ פ צ)
     * common one/two-letter prefixes (ו ה ב ל מ ש כ, וה, וב, ...) are stripped into extra tokens,
       so "בתחנה", "התחנה", "לתחנה" and "תחנה" all match.
+- Field weighting: a term in the passage's own section title counts SECTION_TITLE_WEIGHT times, in the body once,
+  and in the document title only DOC_TITLE_WEIGHT. Without this, a document title such as
+  "כללי נסיעה – ילדים, אופניים, חיות ומטען" makes every section of that document match "אופניים" equally,
+  and the section that is actually about bicycles loses to sections that share generic verbs.
+  Document frequency (for idf) counts a term only where it appears in a section title or body.
 No embeddings, no external index: the whole ranking can be explained on a whiteboard.
 """
 from __future__ import annotations
@@ -21,6 +26,8 @@ FINAL_MAP = str.maketrans({"ך": "כ", "ם": "מ", "ן": "נ", "ף": "פ", "ץ":
 PREFIXES_2 = ("וה", "וב", "ול", "ומ", "וש", "וכ", "כש", "שה", "שב", "של", "מה", "לכ", "בה")
 PREFIXES_1 = ("ו", "ה", "ב", "ל", "מ", "ש", "כ")
 TOKEN_RE = re.compile(r"[א-תA-Za-z0-9]+")
+SECTION_TITLE_WEIGHT = 2.0
+DOC_TITLE_WEIGHT = 0.25
 
 # Tiny query-side expansion for passenger phrasing that the documents express differently.
 # Applied to queries only, so the index stays exactly the document text.
@@ -35,23 +42,30 @@ QUERY_SYNONYMS = {
 }
 
 
-def tokenize(text: str, expand_query: bool = False) -> list[str]:
-    tokens: list[str] = []
+def tokenize_groups(text: str, expand_query: bool = False) -> list[list[str]]:
+    """One group per word: the word itself plus its prefix-stripped / synonym variants.
+    Scoring takes the best variant per group, so a word is never counted twice."""
+    groups: list[list[str]] = []
     for raw in TOKEN_RE.findall(text.lower()):
         t = raw.translate(FINAL_MAP)
-        tokens.append(t)
+        variants = [t]
         if expand_query:
-            tokens.extend(QUERY_SYNONYMS.get(t, []))
+            variants.extend(QUERY_SYNONYMS.get(t, []))
         if len(t) >= 4:
             for p in PREFIXES_2:
                 if t.startswith(p) and len(t) - 2 >= 2:
-                    tokens.append(t[2:])
+                    variants.append(t[2:])
                     break
             for p in PREFIXES_1:
                 if t.startswith(p) and len(t) - 1 >= 2:
-                    tokens.append(t[1:])
+                    variants.append(t[1:])
                     break
-    return tokens
+        groups.append(variants)
+    return groups
+
+
+def tokenize(text: str, expand_query: bool = False) -> list[str]:
+    return [v for g in tokenize_groups(text, expand_query) for v in g]
 
 
 @dataclass
@@ -63,7 +77,18 @@ class Passage:
     doc_version: str
     section_title: str
     text: str
-    tokens: list[str] = field(default_factory=list, repr=False)
+    tokens: list[str] = field(default_factory=list, repr=False)          # section title + body tokens (length + df)
+    weighted_tf: dict = field(default_factory=dict, repr=False)          # term -> weighted term frequency
+    own_terms: set = field(default_factory=set, repr=False)              # terms in section title or body only
+    section_terms: set = field(default_factory=set, repr=False)          # terms in the section title only
+
+    def matches_in_own_text(self, query_tokens: list[str]) -> bool:
+        """True if at least one query term occurs in this passage's own section title or body."""
+        return any(t in self.own_terms for t in query_tokens)
+
+    def matches_section_title(self, query_tokens: list[str]) -> bool:
+        """True if a query term occurs in this passage's section title (the section is explicitly about it)."""
+        return any(t in self.section_terms for t in query_tokens)
 
     def as_dict(self) -> dict:
         return {
@@ -114,8 +139,21 @@ def load_passages(docs_dir: Path) -> list[Passage]:
                 section_title=title.strip(),
                 text=text.strip(),
             )
-            # Index title + doc title + text so a query about the topic hits the right doc.
-            p.tokens = tokenize(f"{p.doc_title} {p.section_title} {p.text}")
+            # Field-weighted index: section title (x2), body (x1), document title (x0.25).
+            section_tokens = tokenize(p.section_title)
+            body_tokens = tokenize(p.text)
+            doc_tokens = tokenize(p.doc_title)
+            p.tokens = section_tokens + body_tokens
+            p.own_terms = set(p.tokens)
+            p.section_terms = set(section_tokens)
+            wtf: dict[str, float] = {}
+            for t in section_tokens:
+                wtf[t] = wtf.get(t, 0.0) + SECTION_TITLE_WEIGHT
+            for t in body_tokens:
+                wtf[t] = wtf.get(t, 0.0) + 1.0
+            for t in doc_tokens:
+                wtf[t] = wtf.get(t, 0.0) + DOC_TITLE_WEIGHT
+            p.weighted_tf = wtf
             passages.append(p)
     return passages
 
@@ -126,25 +164,34 @@ class BM25Retriever:
         self.k1, self.b = k1, b
         self.N = len(passages)
         self.avgdl = sum(len(p.tokens) for p in passages) / max(self.N, 1)
-        self.tf: list[Counter] = [Counter(p.tokens) for p in passages]
+        self.tf: list[dict] = [p.weighted_tf for p in passages]
         df: Counter = Counter()
-        for c in self.tf:
-            df.update(c.keys())
+        for p in passages:
+            df.update(p.own_terms)   # df ignores document-title-only occurrences
         # BM25 idf with the usual +1 smoothing so rare terms weigh more.
         self.idf = {t: math.log(1 + (self.N - n + 0.5) / (n + 0.5)) for t, n in df.items()}
 
-    def score(self, query_tokens: list[str], i: int) -> float:
+    def _term_score(self, t: str, tf: dict, dl: int) -> float:
+        if t not in tf or t not in self.idf:
+            return 0.0
+        f = tf[t]
+        return self.idf[t] * (f * (self.k1 + 1)) / (f + self.k1 * (1 - self.b + self.b * dl / self.avgdl))
+
+    def score(self, query_groups: list[list[str]], i: int) -> float:
+        """Standard BM25, except each query word contributes its best variant only (no double counting)."""
         tf, dl = self.tf[i], len(self.passages[i].tokens)
+        seen: set[tuple[str, ...]] = set()
         s = 0.0
-        for t in set(query_tokens):
-            if t not in tf:
+        for g in query_groups:
+            key = tuple(g)
+            if key in seen:
                 continue
-            f = tf[t]
-            s += self.idf[t] * (f * (self.k1 + 1)) / (f + self.k1 * (1 - self.b + self.b * dl / self.avgdl))
+            seen.add(key)
+            s += max(self._term_score(t, tf, dl) for t in g)
         return s
 
     def retrieve(self, query: str, k: int = 4) -> list[tuple[Passage, float]]:
-        q = tokenize(query, expand_query=True)
+        q = tokenize_groups(query, expand_query=True)
         scored = [(self.passages[i], self.score(q, i)) for i in range(self.N)]
         scored = [(p, s) for p, s in scored if s > 0]
         scored.sort(key=lambda x: x[1], reverse=True)

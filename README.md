@@ -57,7 +57,8 @@ Passenger (Hebrew; typed, or spoken via the browser's speech recognition, transc
 FastAPI app (app/server.py)
    │
    ├─ Retrieval ─── BM25 over docs/*.md split by "## " heading ──► top-4 passages with ids and scores
-   │                (app/rag.py: Hebrew final-letter normalisation, prefix stripping, small query synonym list)
+   │                (app/rag.py: Hebrew final-letter normalisation, prefix stripping, small query synonym list,
+   │                 field weights: section title ×2, body ×1, document title ×0.25)
    │
    ├─ MCP client (app/mcp_client.py) ──stdio──► MCP server subprocess (mcp_server/server.py)
    │        get_service_status(station?)  ← reads demo_status.json (4 switchable scenarios, incl. a feed outage)
@@ -172,9 +173,10 @@ product; the reply text in offline mode is assembled by code and labelled as suc
 
 ## 8. What was measured
 
-`eval/cases.json` holds 24 cases (ordinary, live status incl. a feed outage, ambiguous incl. a two-turn flow,
-missing information, conflicting documents, handoff, one safety case with a pasted card number). Checks are
-deterministic (actions, tools called or not, cited documents, required or forbidden strings). No LLM judge.
+`eval/cases.json` holds 24 original cases (ordinary, live status incl. a feed outage, ambiguous incl. a two-turn
+flow, missing information, conflicting documents, handoff, one safety case with a pasted card number) plus 10
+holdout paraphrases marked `"holdout": true`. Checks are deterministic (actions, tools called or not, cited
+documents, required or forbidden strings). No LLM judge.
 Full output: [`eval/results.md`](eval/results.md).
 
 | Part | What | Result (last run) |
@@ -182,11 +184,23 @@ Full output: [`eval/results.md`](eval/results.md).
 | A | Retrieval: expected document in top 4 | 15/15 |
 | B | Live agent (Claude) on 24 cases | **Not run** (no API key used in this project) |
 | C | Guided cards: sources retrieved, MCP calls succeeded, case id returned | 3/3 |
-| D | Deterministic free-question workflow on the 24 cases | 22/24 |
+| D | Deterministic free-question workflow on the original 24 cases (available while the rules were tuned) | 23/24 |
+| E | Same workflow on 10 holdout paraphrases written afterwards, never used for tuning | 7/10 |
 
-The two Part D failures, as measured: `ord_03` (the bicycle passage scores below the quote threshold, so the
-reply quotes the luggage and animals sections instead) and `miss_01` (a price question quotes the payment-methods
-passage instead of saying prices are not in the documents). Both are limits of lexical retrieval plus fixed rules.
+Part D failure, as measured: `amb_04` (two-turn follow-up "the credit card was not read at the gate"): the reply
+quotes the "personal details" section of the escalation policy, which mentions credit cards, instead of the
+"reader not responding" section, because the passenger's verb (נקלט) does not occur in that section.
+
+Part E failures, as measured: `new_04` (a small dog on the train: the animals section scores below the quote
+threshold, so the reply is an honest "unsupported"), `new_07` (a train that gets stuck: the reply quotes the
+replacement-bus section rather than the "train stopped between stations" section, because נתקעת ≠ נעצרת), and
+`new_08` ("I want my money back": no handoff rule covers this phrasing, so no case is prepared). Part E also
+showed the live-status regex over-triggering on "בשעות הבוקר" in a bicycle question (`new_01` still passed).
+
+Two earlier Part D failures were fixed with general rules rather than per-question patches: field-weighted
+BM25 (section title ×2, body ×1, document title ×0.25, one score per question word) plus "quote only sections
+whose own title contains a question word when such sections exist", and a price rule ("price question with no
+passage stating a price → unsupported"). The eval assertions were not changed for these fixes.
 
 Browser verification of the voice interface (Chromium 148 embedded browser, Windows 11, 2026-09-15):
 
@@ -207,7 +221,8 @@ No business-impact figures are claimed.
 
 - **Offline replies are assembled by rules.** They quote documents verbatim and report tool results; they do not
   understand paraphrase. The threshold (`MIN_PASSAGE_SCORE = 6.0`) and the regex rules are visible in
-  `app/offline_workflow.py` and were tuned on the eval set, so Part D is not a blind test.
+  `app/offline_workflow.py` and were tuned on the original 24 cases, so Part D is not a blind test; Part E
+  (holdout paraphrases) is the honest number, and its failures show the kinds of phrasing the rules miss.
 - **Demo documents**, invented for the project; nothing in the code assumes their content except the eval cases,
   the guided scenarios and the conflict pair (`refunds_v2` vs `refunds_v1_old`).
 - **Lexical retrieval** (BM25 with prefix stripping and a hand-made synonym list). Embeddings or hybrid retrieval

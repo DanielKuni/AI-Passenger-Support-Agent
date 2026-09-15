@@ -40,6 +40,11 @@ CONFLICT_GROUPS = [("refunds_v2", "refunds_v1_old")]
 # A quoted passage that itself says the information is missing -> the honest action is "unsupported".
 MISSING_MARKERS = ["אינו מציין", "אין פירוט", "אינו מגדיר", "לא מגדיר", "אינה מציינת"]
 ELEVATOR_RE = re.compile(r"מעלית|מעליות|מדרגות נעות")
+# Price questions are only answerable from a passage that actually states a price.
+_W = r"(?<![א-ת])(?:%s)(?![א-ת])"   # Hebrew word boundary: "עלות" must not match inside "להעלות"
+PRICE_QUESTION_RE = re.compile(_W % r"כמה עולה|כמה זה עולה|כמה משלמים|מה המחיר|מחיר|מחירים|עלות|תעריף|תעריפים")
+PRICE_SOURCE_RE = re.compile(r"₪|\d+\s*(ש\"ח|שקל|שקלים)")
+PRICE_TOPIC_RE = re.compile(r"תעריף|מחיר")
 LONG_DIGITS_RE = re.compile(r"\d[\d \-]{11,}\d")   # 13+ digit runs: looks like a full card number
 
 
@@ -101,7 +106,23 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     hits = retriever.retrieve(query, k=config.TOP_K)
     retrieved = [dict(p.as_dict(), score=round(s, 2)) for p, s in hits]
     steps.append({"step": "retrieval", "detail_he": f"אחזור BM25 אמיתי: {len(retrieved)} פסקאות (סף לציטוט: ציון {MIN_PASSAGE_SCORE})."})
-    strong = [p for p in retrieved if p["score"] >= MIN_PASSAGE_SCORE]
+    # A passage is quotable only if it scores above the threshold AND matches the question in its own
+    # section title or body (a match through the document title alone is not enough).
+    q_tokens_exp = tokenize(query, expand_query=True)
+    strong = [p for p in retrieved
+              if p["score"] >= MIN_PASSAGE_SCORE and retriever.get(p["id"]).matches_in_own_text(q_tokens_exp)]
+    # If some retrieved section is titled with a word from the question, that section is explicitly about the
+    # topic: quote only such sections rather than higher-scoring sections that merely share generic words.
+    title_hits = [p for p in strong if retriever.get(p["id"]).matches_section_title(q_tokens_exp)]
+    if title_hits:
+        strong = title_hits
+        steps.append({"step": "section_title_match", "detail_he": "כותרת סעיף תואמת למילה מהשאלה; מצטטים רק סעיפים כאלה."})
+
+    # Price questions: quotable only from a passage that states a price. The demo documents state none.
+    price_question = bool(PRICE_QUESTION_RE.search(question))
+    if price_question and not any(PRICE_SOURCE_RE.search(p["text"]) for p in strong):
+        strong = [p for p in retrieved if PRICE_TOPIC_RE.search(p["text"])][:1]   # only a passage about tariffs, if any
+        steps.append({"step": "price_rule", "detail_he": "שאלת מחיר: אף פסקה שאוחזרה אינה מכילה מחיר, ולכן התשובה מסומנת כלא נתמכת."})
 
     live = needs_live_status(question)
     station = _find_station(question)
@@ -198,6 +219,10 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     missing = _question_hits_missing_sentence(question, quotes)
     if case:
         action = "handoff"
+    elif price_question and not any(PRICE_SOURCE_RE.search(p["text"]) for p in quotes):
+        action = "unsupported"
+        parts.append("לא מצאתי במסמכי ההדגמה מידע על מחירים או תעריפים, ולכן אין לי תשובה על המחיר. "
+                     "לבירור תעריפים והנחות יש לפנות למחשבון התעריפים של המפעילה או לנציג.")
     elif not quotes and not status_text:
         action = "unsupported"
         parts.append("לא מצאתי במסמכי ההדגמה פסקה שעונה על השאלה, ולא זוהתה שאלה על מצב השירות הנוכחי. "
