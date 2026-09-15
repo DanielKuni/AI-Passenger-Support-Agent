@@ -19,10 +19,10 @@ import re
 from . import config
 from .agent import needs_live_status
 from .mcp_client import MCPBridge
-from .rag import BM25Retriever, tokenize
+from .rag import STOPWORDS, BM25Retriever, content_tokens, tokenize
 
-LABEL_HE = ("תשובה תבניתית (מצב הדגמה ללא מודל): ציטוטים ממסמכי ההדגמה ותוצאות כלי MCP בלבד "
-            "– לא נוצרה על ידי מודל שפה")
+LABEL_HE = ("תשובה תבניתית במצב הדגמה ללא מודל. היא מורכבת מציטוטים ממסמכי ההדגמה ומתוצאות כלי MCP בלבד, "
+            "ולא נוצרה על ידי מודל שפה.")
 
 MIN_PASSAGE_SCORE = 6.0   # below this BM25 score a passage is not quoted (chosen from the score dump of the eval set: relevant hits scored 6+, noise below)
 MAX_QUOTES = 2
@@ -31,7 +31,8 @@ MAX_QUOTES = 2
 HANDOFF_RULES: list[tuple[str, list[str]]] = [
     ("double_charge", [r"חיוב כפול", r"חויבתי פעמיים", r"חייבו אותי פעמיים", r"פעמיים"]),
     ("fine_appeal", [r"קנס", r"לערער", r"ערעור"]),
-    ("payment_refund", [r"החזר", r"ביטול חיוב", r"ביטול החיוב", r"לבטל את החיוב"]),
+    ("payment_refund", [r"החזר", r"ביטול חיוב", r"ביטול החיוב", r"לבטל את החיוב",
+                        r"הכסף בחזרה", r"כסף בחזרה", r"להחזיר לי", r"לקבל בחזרה", r"פיצוי", r"זיכוי"]),
     ("complaint", [r"תלונה", r"להתלונן", r"גס רוח", r"התנהגות"]),
     ("lost_item", [r"שכחתי", r"איבדתי", r"אבד לי", r"אבדה לי"]),
 ]
@@ -108,7 +109,7 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     steps.append({"step": "retrieval", "detail_he": f"אחזור BM25 אמיתי: {len(retrieved)} פסקאות (סף לציטוט: ציון {MIN_PASSAGE_SCORE})."})
     # A passage is quotable only if it scores above the threshold AND matches the question in its own
     # section title or body (a match through the document title alone is not enough).
-    q_tokens_exp = tokenize(query, expand_query=True)
+    q_tokens_exp = content_tokens(query, expand_query=True)   # stopwords such as "מה" or "יש" never count as a match
     strong = [p for p in retrieved
               if p["score"] >= MIN_PASSAGE_SCORE and retriever.get(p["id"]).matches_in_own_text(q_tokens_exp)]
     # If some retrieved section is titled with a word from the question, that section is explicitly about the
@@ -133,12 +134,12 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     #    documents, and carries no live/handoff/station signal cannot be routed honestly -> ask.
     top_score = retrieved[0]["score"] if retrieved else 0.0
     if (len(tokens) < 4 or top_score < 2.0) and not live and not category and not station:
-        steps.append({"step": "clarify", "detail_he": "השאלה קצרה מדי לזיהוי נושא; מבקשים הבהרה במקום לנחש."})
+        steps.append({"step": "clarify", "detail_he": "השאלה קצרה מדי לזיהוי נושא, ולכן מבקשים הבהרה במקום לנחש."})
         return _result(question, "clarify",
-                       "כדי לעזור אני צריך עוד פרט אחד: על מה מדובר – תשלום או חיוב, שיבוש בשירות, או עזרה בתחנה? ובאיזו תחנה?",
+                       "כדי לעזור אני צריך עוד פרט אחד. על מה מדובר: תשלום או חיוב, שיבוש בשירות, או עזרה בתחנה? ובאיזו תחנה?",
                        [], retrieved, [], None, flags, steps)
     if live and ELEVATOR_RE.search(question) and not station:
-        steps.append({"step": "clarify", "detail_he": "שאלה על מעלית ללא שם תחנה; מצב מעליות נבדק לפי תחנה."})
+        steps.append({"step": "clarify", "detail_he": "שאלה על מעלית ללא שם תחנה. מצב מעליות נבדק לפי תחנה."})
         return _result(question, "clarify", "באיזו תחנה מדובר? מצב המעליות נבדק לפי תחנה.", [], retrieved, [], None, flags, steps)
 
     # 4. Live status via the real MCP tool.
@@ -146,17 +147,17 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     if live:
         args = {"station": station} if station else {}
         text, is_error = await bridge.call_tool("get_service_status", args)
-        steps.append({"step": "mcp_call", "detail_he": f"קריאה אמיתית לכלי MCP get_service_status{'(' + station + ')' if station else ''} – {'שגיאה' if is_error else 'הצליחה'}."})
+        steps.append({"step": "mcp_call", "detail_he": f"קריאה אמיתית לכלי MCP get_service_status{'(' + station + ')' if station else ''}: {'שגיאה' if is_error else 'הצליחה'}."})
         if is_error:
             status_error = True
-            status_text = ("לא הצלחתי לוודא את מצב השירות כרגע: מערכת מצב השירות (הדגמה) החזירה שגיאה. "
+            status_text = ("לא הצלחתי לוודא את מצב השירות כרגע, כי מערכת מצב השירות (הדגמה) החזירה שגיאה. "
                            "מומלץ לבדוק בערוצים הרשמיים של המפעילה או לפנות לנציג.")
         else:
             try:
                 status_text = _status_sentence(json.loads(text))
             except json.JSONDecodeError:
                 status_error = True
-                status_text = "מערכת מצב השירות החזירה תשובה לא קריאה; לא ניתן לוודא את המצב כרגע."
+                status_text = "מערכת מצב השירות החזירה תשובה לא קריאה, ולכן לא ניתן לוודא את המצב כרגע."
 
     # 5. Conflicting documents?
     conflict = False
@@ -167,7 +168,7 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
         if pa and pb:
             conflict = True
             quotes = [pa, pb]
-            steps.append({"step": "conflict", "detail_he": f"שתי גרסאות סותרות אוחזרו ({a}, {b}); לא בוחרים אחת בשקט."})
+            steps.append({"step": "conflict", "detail_he": f"שתי גרסאות סותרות אוחזרו ({a}, {b}). לא בוחרים אחת בשקט."})
     if not quotes:
         quotes = strong[:MAX_QUOTES]
     # Handoff questions: the escalation policy is the passage that justifies the handoff; cite it when retrieved.
@@ -182,16 +183,16 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
         cat = category or "other"
         summary = f"שאלת הנוסע (כפי שנמסרה): {question}"
         if conflict:
-            summary += " | נמצאו שתי גרסאות סותרות במסמכים; נדרש אימות של נציג."
+            summary += ". נמצאו שתי גרסאות סותרות במסמכים, ונדרש אימות של נציג."
         checks = f"אחזור מסמכים: {', '.join(p['id'] for p in quotes) or 'ללא פסקה מעל הסף'}"
         if live:
-            checks += f"; מצב שירות: {'שגיאה' if status_error else 'נבדק'}"
+            checks += f". מצב שירות: {'שגיאה' if status_error else 'נבדק'}"
         text, is_error = await bridge.call_tool("prepare_support_case", {
             "category": cat, "summary_he": summary,
-            "passenger_details_he": "רק הפרטים שמופיעים בשאלה; לא נוספו פרטים.",
+            "passenger_details_he": "רק הפרטים שמופיעים בשאלה. לא נוספו פרטים.",
             "checks_done_he": checks,
         })
-        steps.append({"step": "mcp_call", "detail_he": f"קריאה אמיתית לכלי MCP prepare_support_case ({cat}) – {'שגיאה' if is_error else 'הצליחה'}."})
+        steps.append({"step": "mcp_call", "detail_he": f"קריאה אמיתית לכלי MCP prepare_support_case ({cat}): {'שגיאה' if is_error else 'הצליחה'}. הפנייה נשמרת במערכת ההדגמה בלבד."})
         if not is_error:
             try:
                 case = json.loads(text)
@@ -203,7 +204,7 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     # 7. Assemble the templated reply.
     parts: list[str] = []
     if redacted:
-        parts.append("לתשומת לבך: הסרתי מספר ארוך שנראה כמספר כרטיס. אין למסור מספר כרטיס מלא; ארבע ספרות אחרונות מספיקות לבירור.")
+        parts.append("לתשומת לבך: הסרתי מספר ארוך שנראה כמספר כרטיס. אין למסור מספר כרטיס מלא. ארבע ספרות אחרונות מספיקות לבירור.")
     if status_text:
         parts.append(status_text)
     if conflict:
@@ -211,7 +212,8 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
     for p in quotes:
         parts.append(f"לפי מסמך ההדגמה \"{p['doc_title']}\" (סעיף \"{p['section_title']}\"): {' '.join(p['text'].split())}")
     if case:
-        parts.append(f"הוכנה פנייה לנציג אנושי (הדגמה), מספר {case.get('case_id', '')}. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.")
+        parts.append(f"נושא זה מטופל על ידי נציג אנושי, ולכן הוכנה פניית הדגמה מספר {case.get('case_id', '')}. "
+                     "הפנייה כוללת רק את מה שנמסר בשאלה. היא נשמרת במערכת ההדגמה בלבד ואינה נשלחת לצוות שירות אמיתי.")
 
     # "Information missing" rule: a quoted passage may contain a sentence saying the document does not
     # specify something. That only matters if the question is about that very thing, so we require at least
@@ -231,18 +233,12 @@ async def run_free_question(question: str, history: list[dict], retriever: BM25R
         action = "unsupported"
     elif missing and not status_text:
         action = "unsupported"
-        parts.append("הפסקה שאוחזרה מציינת במפורש שהפרט שנשאל עליו אינו מוגדר במסמך, ולכן אין לי תשובה מבוססת; מומלץ לפנות לנציג.")
+        parts.append("הפסקה שאוחזרה מציינת במפורש שהפרט שנשאל עליו אינו מוגדר במסמך, ולכן אין לי תשובה מבוססת. מומלץ לפנות לנציג.")
     else:
         action = "answer"
     steps.append({"step": "templated_response", "detail_he": LABEL_HE})
     tool_calls = bridge.call_log[log_start:]
     return _result(question, action, " ".join(parts), quotes, retrieved, tool_calls, case, flags, steps, original)
-
-
-from .rag import FINAL_MAP  # noqa: E402  (tokenize() normalises final letters, so the stopwords must match that form)
-
-STOPWORDS = {w.translate(FINAL_MAP) for w in
-             ("אם", "יש", "מה", "של", "את", "על", "לא", "או", "גם", "זה", "אני", "הוא", "היא", "עם", "כל", "איך", "האם", "לי")}
 
 
 def _question_hits_missing_sentence(question: str, quotes: list[dict]) -> bool:

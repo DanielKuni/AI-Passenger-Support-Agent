@@ -105,12 +105,13 @@ def prepare_support_case(
     passenger_details_he: str = "",
     checks_done_he: str = "",
 ) -> dict:
-    """Prepare a (simulated) support case for a HUMAN representative.
+    """Prepare a (simulated) support case of the kind a HUMAN representative would handle.
 
     Call this when the passenger needs something the assistant cannot do or verify:
     refunds, fine appeals, complaints, injuries, conflicting or missing guidance.
     Include ONLY details the passenger actually gave. Never include full card numbers,
-    passwords or ID numbers.
+    passwords or ID numbers. The case is stored in the demo file only; it is NOT sent to
+    any real service team and nobody will contact the passenger.
 
     Args:
         category: Case category.
@@ -127,7 +128,8 @@ def prepare_support_case(
         "demo": True,
         "case_id": case_id,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "status": "prepared_for_human_review",
+        "status": "demo_only_not_sent",
+        "note": "Demo data. Stored in demo_cases.json only; not sent to a real service team.",
         "category": category,
         "summary_he": summary_he,
         "passenger_details_he": passenger_details_he,

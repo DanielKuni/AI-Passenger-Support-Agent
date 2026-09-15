@@ -16,11 +16,14 @@ from .mcp_client import MCPBridge
 from .prompts import SYSTEM_PROMPT, build_user_message
 from .rag import BM25Retriever
 
-# Words that usually mean "right now" / "today" / a live condition. Cheap, transparent, and measured by the eval.
+# Words that usually mean "right now" or a live condition. Cheap, transparent, and measured by the eval.
 LIVE_STATUS_PATTERNS = [
-    r"עכשיו", r"כרגע", r"היום", r"הבוקר", r"הערב", r"ברגע זה", r"נכון ל",
+    r"עכשיו", r"כרגע", r"ברגע זה", r"נכון ל",
     r"עיכוב", r"עיכובים", r"תקלה", r"שיבוש", r"מושבת", r"סגור", r"סגורה", r"פועל", r"פועלת", r"עובד", r"עובדת",
-    r"יש רכבות", r"אין רכבות", r"אוטובוס חלופי", r"אוטובוסים חלופיים",
+    r"יש רכבות", r"אין רכבות", r"יש בעיה", r"מה המצב", r"אוטובוס חלופי", r"אוטובוסים חלופיים",
+    # "today", "this morning", "this evening" mean "now" unless they are part of a period such as
+    # "בשעות הבוקר" (morning hours), which describes a schedule rather than the current situation.
+    r"(?<!שעות )(?:היום|הבוקר|הערב)",
 ]
 LIVE_RE = re.compile("|".join(LIVE_STATUS_PATTERNS))
 

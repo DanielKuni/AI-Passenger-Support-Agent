@@ -31,8 +31,9 @@ from app.rag import BM25Retriever, load_passages  # noqa: E402
 
 EVAL_DIR = Path(__file__).resolve().parent
 ALL_CASES = [c for c in json.loads((EVAL_DIR / "cases.json").read_text(encoding="utf-8"))["cases"] if not c.get("skip")]
-CASES = [c for c in ALL_CASES if not c.get("holdout")]          # the original 24 (used while tuning the offline rules)
-HOLDOUT_CASES = [c for c in ALL_CASES if c.get("holdout")]      # paraphrases written afterwards; never used for tuning
+CASES = [c for c in ALL_CASES if not c.get("paraphrase") and not c.get("blind")]   # the original 24 (used while tuning)
+PARAPHRASE_CASES = [c for c in ALL_CASES if c.get("paraphrase")]   # 10 additional paraphrases; consulted during debugging, not blind
+BLIND_CASES = [c for c in ALL_CASES if c.get("blind")]             # written after the rules were frozen; run once, never tuned on
 
 
 def set_scenario(name: str) -> None:
@@ -220,7 +221,7 @@ def _workflow_section(title: str, rows: list[dict] | None, intro: str) -> list[s
 
 def write_report(retrieval_rows: list[dict], agent_rows: list[dict] | None, skipped_reason: str | None,
                  offline_rows: list[dict] | None = None, workflow_rows: list[dict] | None = None,
-                 holdout_rows: list[dict] | None = None) -> None:
+                 paraphrase_rows: list[dict] | None = None, blind_rows: list[dict] | None = None) -> None:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     L = [f"# Evaluation results", "", f"Generated: {now}  ", f"Model: `{config.MODEL_ID}` (effort `{config.EFFORT}`)  ",
          f"Cases: {len(CASES)} in `eval/cases.json`", "",
@@ -272,12 +273,18 @@ def write_report(retrieval_rows: list[dict], agent_rows: list[dict] | None, skip
         "The checks were written for the model-driven agent; this part shows how far regex rules + BM25 quotes + real MCP calls "
         "get without a model. These cases were available while the rules and the quote threshold were being set, so this is not a blind test.")
     L += _workflow_section(
-        f"Part E - holdout paraphrases ({len(HOLDOUT_CASES)} new questions written after the rules were fixed; never used for tuning)",
-        holdout_rows,
-        "Same workflow and same kind of checks as Part D, on questions that were not seen while tuning.")
+        f"Part E - {len(PARAPHRASE_CASES)} additional paraphrase cases (not a blind test)",
+        paraphrase_rows,
+        "These questions were written after the first version of the rules but before later rule changes, and their results were "
+        "consulted while debugging. Their result when first run, before those later changes, was 7/10. Same workflow and checks as Part D.")
+    L += _workflow_section(
+        f"Part F - {len(BLIND_CASES)} blind questions (written after the rules were frozen, run once, never tuned on)",
+        blind_rows,
+        "Same workflow and checks as Part D. The rules were not changed after seeing these results.")
     (EVAL_DIR / "results.md").write_text("\n".join(L), encoding="utf-8")
     (EVAL_DIR / "results_raw.json").write_text(json.dumps({"retrieval": retrieval_rows, "agent": agent_rows, "offline_demo": offline_rows,
-                                                            "offline_workflow": workflow_rows, "holdout": holdout_rows}, ensure_ascii=False, indent=2), encoding="utf-8")
+                                                            "offline_workflow": workflow_rows, "paraphrase": paraphrase_rows, "blind": blind_rows},
+                                                           ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\nwrote {EVAL_DIR / 'results.md'}")
 
 
@@ -285,18 +292,20 @@ def main() -> None:
     retriever = BM25Retriever(load_passages(config.DOCS_DIR))
     retrieval_rows = retrieval_eval(retriever)
     print(f"Part A retrieval: {sum(r['hit'] for r in retrieval_rows)}/{len(retrieval_rows)} hit@{config.TOP_K}")
-    agent_rows, skipped, offline_rows, workflow_rows, holdout_rows = None, None, None, None, None
+    agent_rows, skipped, offline_rows, workflow_rows, paraphrase_rows, blind_rows = None, None, None, None, None, None
     if "--retrieval-only" not in sys.argv:
         offline_rows = asyncio.run(offline_demo_eval(retriever))
         workflow_rows = asyncio.run(offline_workflow_eval(retriever, CASES))
-        holdout_rows = asyncio.run(offline_workflow_eval(retriever, HOLDOUT_CASES))
+        paraphrase_rows = asyncio.run(offline_workflow_eval(retriever, PARAPHRASE_CASES))
+        if BLIND_CASES and "--skip-blind" not in sys.argv:
+            blind_rows = asyncio.run(offline_workflow_eval(retriever, BLIND_CASES))
     if "--retrieval-only" in sys.argv:
         skipped = "Skipped by --retrieval-only."
     elif not config.has_api_key():
         skipped = "ANTHROPIC_API_KEY is not set (this project is presented in offline demo mode). Add a key to .env and run `python -m eval.run_eval` to measure it."
     else:
         agent_rows = asyncio.run(agent_eval(retriever))
-    write_report(retrieval_rows, agent_rows, skipped, offline_rows, workflow_rows, holdout_rows)
+    write_report(retrieval_rows, agent_rows, skipped, offline_rows, workflow_rows, paraphrase_rows, blind_rows)
 
 
 if __name__ == "__main__":

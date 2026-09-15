@@ -9,7 +9,7 @@ Minimal, inspectable RAG layer.
       so "בתחנה", "התחנה", "לתחנה" and "תחנה" all match.
 - Field weighting: a term in the passage's own section title counts SECTION_TITLE_WEIGHT times, in the body once,
   and in the document title only DOC_TITLE_WEIGHT. Without this, a document title such as
-  "כללי נסיעה – ילדים, אופניים, חיות ומטען" makes every section of that document match "אופניים" equally,
+  "כללי נסיעה: ילדים, אופניים, חיות ומטען" makes every section of that document match "אופניים" equally,
   and the section that is actually about bicycles loses to sections that share generic verbs.
   Document frequency (for idf) counts a term only where it appears in a section title or body.
 No embeddings, no external index: the whole ranking can be explained on a whiteboard.
@@ -34,12 +34,35 @@ DOC_TITLE_WEIGHT = 0.25
 QUERY_SYNONYMS = {
     "חויבתי": ["חיוב"], "חייבו": ["חיוב"], "חיובים": ["חיוב"],
     "פעמיים": ["כפול"], "שולם": ["תשלום"], "לשלם": ["תשלום"],
-    "מעליות": ["מעלית"], "קנסו": ["קנס"], "נקנסתי": ["קנס"],
+    "קנסו": ["קנס"], "נקנסתי": ["קנס"],
     "איבדתי": ["אבד", "אבדות"], "שכחתי": ["אבדות", "נשכח"],
     "החזר": ["החזרים"], "עגלה": ["עגלת"],
-    # common plurals -> the singular form used in the documents
-    "רכבות": ["רכבת"], "אוטובוסים": ["אוטובוס"], "תחנות": ["תחנה"], "שיבושים": ["שיבוש"], "עיכובים": ["עיכוב"],
+    # passenger verbs -> the verbs the documents use for the same situation
+    "נקלט": ["מגיב", "תיקוף"], "נקלטה": ["מגיב", "תיקוף"], "נקלטו": ["מגיב", "תיקוף"],
+    "נתקעת": ["נעצרת"], "נתקעה": ["נעצרה"], "נתקע": ["נעצר"], "תקועה": ["נעצרה"], "תקוע": ["נעצר"],
 }
+
+# Words that carry no topic on their own. Excluded from "does this passage match the question" checks.
+STOPWORDS = {w.translate(FINAL_MAP) for w in (
+    "אם", "יש", "מה", "של", "את", "על", "לא", "או", "גם", "זה", "זו", "אני", "הוא", "היא", "עם", "כל", "איך",
+    "האם", "לי", "שלי", "אפשר", "מותר", "צריך", "רוצה", "כמה", "מי", "איפה", "מתי", "למה", "בין", "אבל",
+)}
+
+
+def _suffix_variants(t: str) -> list[str]:
+    """Light Hebrew suffix normalisation: plural and construct forms map to the base form used in the documents.
+    שערים -> שער, מעליות -> מעלית, תחנות -> תחנה, תחנת -> תחנה, קטנות -> קטן."""
+    out: list[str] = []
+    if t.endswith("ימ") and len(t) >= 5:
+        out.append(t[:-2])
+    if t.endswith("יות") and len(t) >= 5:
+        out.append(t[:-3] + "ית")
+    elif t.endswith("ות") and len(t) >= 4:
+        out.append(t[:-2] + "ה")
+        out.append(t[:-2])
+    elif t.endswith("ת") and len(t) >= 4:
+        out.append(t[:-1] + "ה")
+    return out
 
 
 def tokenize_groups(text: str, expand_query: bool = False) -> list[list[str]]:
@@ -60,8 +83,16 @@ def tokenize_groups(text: str, expand_query: bool = False) -> list[list[str]]:
                 if t.startswith(p) and len(t) - 1 >= 2:
                     variants.append(t[1:])
                     break
-        groups.append(variants)
+        for v in list(variants):
+            variants.extend(_suffix_variants(v))
+        seen: set[str] = set()
+        groups.append([v for v in variants if not (v in seen or seen.add(v))])
     return groups
+
+
+def content_tokens(text: str, expand_query: bool = False) -> list[str]:
+    """Query tokens without stopwords (used for match checks, not for scoring)."""
+    return [v for g in tokenize_groups(text, expand_query) if g[0] not in STOPWORDS for v in g]
 
 
 def tokenize(text: str, expand_query: bool = False) -> list[str]:

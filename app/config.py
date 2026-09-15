@@ -1,4 +1,4 @@
-"""Central configuration. Everything that an interviewer might ask "why this value?" lives here."""
+"""Central configuration. Every tunable value lives here with a short reason."""
 from __future__ import annotations
 
 import os

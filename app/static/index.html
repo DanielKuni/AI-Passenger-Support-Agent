@@ -83,14 +83,14 @@
 <main>
   <section class="card chat">
     <div class="guided">
-      <h2>הדגמה מודרכת – ללא מפתח API וללא מודל שפה</h2>
-      <p>בכל תרחיש האחזור מהמסמכים וקריאות ה-MCP מתבצעים באמת; רק נוסח התשובה מוגדר מראש ומסומן ככזה.</p>
+      <h2>הדגמה מודרכת ללא מפתח API וללא מודל שפה</h2>
+      <p>בכל תרחיש האחזור מהמסמכים וקריאות ה-MCP מתבצעים באמת. רק נוסח התשובה מוגדר מראש, והוא מסומן ככזה.</p>
       <div class="scenarios" id="scenarios"></div>
     </div>
     <div class="messages" id="messages"></div>
     <div class="composer">
       <button class="mic" id="mic" title="דיבור בעברית (he-IL)">🎤</button>
-      <textarea id="input" placeholder="כתבו או דברו שאלה על תשלום, שיבוש בשירות או עזרה בתחנה…"></textarea>
+      <textarea id="input" placeholder="כתבו או דברו שאלה על תשלום, שיבוש בשירות או עזרה בתחנה"></textarea>
       <button class="primary" id="send">שליחה</button>
     </div>
     <div class="voice-status" id="voiceStatus"></div>
@@ -98,23 +98,23 @@
   </section>
 
   <aside class="card dev">
-    <h2>פאנל מפתחים – התור האחרון</h2>
+    <h2>פאנל מפתחים: התור האחרון</h2>
     <div class="kv" id="devMeta">עדיין לא הורץ תרחיש.</div>
     <h3>דגלים (בדיקות קוד על התשובה)</h3>
-    <div class="flags" id="flags"><span class="muted">—</span></div>
+    <div class="flags" id="flags"><span class="muted">אין</span></div>
     <h3>קריאות אמיתיות לכלי MCP (הנתונים שמוחזרים הם נתוני הדגמה)</h3>
-    <div id="tools"><span class="muted">—</span></div>
+    <div id="tools"><span class="muted">אין</span></div>
     <h3>פסקאות שאוחזרו (BM25, ירוק = צוטט)</h3>
-    <div id="hits"><span class="muted">—</span></div>
+    <div id="hits"><span class="muted">אין</span></div>
     <h3>פלט מודל גולמי</h3>
-    <pre id="raw">—</pre>
-    <h3>פניות הדגמה שהוכנו לנציג <button id="refreshCases" style="font-size:12px">רענון</button></h3>
-    <div class="cases-list" id="cases"><span class="muted">—</span></div>
+    <pre id="raw">אין</pre>
+    <h3>פניות הדגמה שנשמרו (לא נשלחות לצוות אמיתי) <button id="refreshCases" style="font-size:12px">רענון</button></h3>
+    <div class="cases-list" id="cases"><span class="muted">אין</span></div>
   </aside>
 </main>
 
 <script>
-const ACTION_LABEL = { answer: "מענה מבוסס מסמכים/כלים", clarify: "שאלת הבהרה", handoff: "העברה לנציג אנושי", unsupported: "אין תמיכה במסמכים" };
+const ACTION_LABEL = { answer: "מענה מבוסס מסמכים או כלים", clarify: "שאלת הבהרה", handoff: "נושא לנציג אנושי (פניית הדגמה)", unsupported: "אין תמיכה במסמכים" };
 const EXAMPLES = [
   "אפשר לשלם במזומן ברכבת?", "יש עיכובים בקו עכשיו?", "המעלית בתחנת אלנבי עובדת?",
   "עד מתי אפשר להגיש בקשת החזר על חיוב שגוי?", "כמה עולה חופשי חודשי לסטודנטים?", "לא עבד לי",
@@ -130,15 +130,15 @@ const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Typ
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog = null, recognizing = false;
 function initSpeech() {
-  if (!SR) { $("mic").disabled = true; $("mic").title = "זיהוי דיבור אינו נתמך בדפדפן זה"; setVoiceStatus("זיהוי דיבור אינו נתמך בדפדפן זה – אפשר להקליד."); return; }
+  if (!SR) { $("mic").disabled = true; $("mic").title = "זיהוי דיבור אינו נתמך בדפדפן זה"; setVoiceStatus("זיהוי דיבור אינו נתמך בדפדפן זה. אפשר להקליד."); return; }
   recog = new SR(); recog.lang = "he-IL"; recog.interimResults = true; recog.continuous = false; recog.maxAlternatives = 1;
   recog.onresult = e => {
     let text = ""; let final = false;
     for (const r of e.results) { text += r[0].transcript; if (r.isFinal) final = true; }
     $("input").value = text;
-    setVoiceStatus(final ? "תמלול הסתיים. אפשר לתקן את הטקסט בתיבה ואז ללחוץ שליחה." : "מתמלל…");
+    setVoiceStatus(final ? "התמלול הסתיים. אפשר לתקן את הטקסט בתיבה ואז ללחוץ על שליחה." : "מתמלל…");
   };
-  recog.onerror = e => setVoiceStatus("שגיאת זיהוי דיבור: " + e.error + " – אפשר להקליד במקום.");
+  recog.onerror = e => setVoiceStatus("שגיאת זיהוי דיבור: " + e.error + ". אפשר להקליד במקום.");
   recog.onend = () => { recognizing = false; $("mic").textContent = "🎤"; $("mic").classList.remove("rec"); };
 }
 function setVoiceStatus(t) { $("voiceStatus").textContent = t; }
@@ -146,7 +146,7 @@ function toggleRec() {
   if (!recog) return;
   if (recognizing) { recog.stop(); return; }
   $("input").value = ""; recognizing = true; $("mic").textContent = "■"; $("mic").classList.add("rec");
-  setVoiceStatus("מאזין… דברו בעברית. התמלול יופיע בתיבה ואפשר לתקן אותו לפני השליחה.");
+  setVoiceStatus("מאזין. דברו בעברית. התמלול יופיע בתיבה ואפשר לתקן אותו לפני השליחה.");
   try { recog.start(); } catch (e) { recognizing = false; setVoiceStatus("לא ניתן להפעיל זיהוי דיבור: " + e); }
 }
 $("mic").addEventListener("click", toggleRec);
@@ -158,7 +158,7 @@ function pickVoice() {
   const vs = speechSynthesis.getVoices();
   heVoice = vs.find(v => (v.lang || "").toLowerCase().startsWith("he")) || null;
   document.querySelectorAll("button.play").forEach(b => { b.disabled = !heVoice; b.title = heVoice ? "השמעת התשובה בעברית" : "אין קול עברי מותקן בדפדפן"; });
-  document.querySelectorAll(".tts-note").forEach(n => n.textContent = heVoice ? `קול: ${heVoice.name}` : "אין קול עברי מותקן בדפדפן – ההשמעה כבויה, הטקסט זמין.");
+  document.querySelectorAll(".tts-note").forEach(n => n.textContent = heVoice ? `קול: ${heVoice.name}` : "אין קול עברי מותקן בדפדפן, ולכן ההשמעה כבויה. הטקסט זמין.");
 }
 if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 function speak(text) {
@@ -177,8 +177,8 @@ async function loadMeta() {
   for (const [k, label] of Object.entries(m.scenarios)) {
     const o = document.createElement("option"); o.value = k; o.textContent = label; if (k === m.scenario) o.selected = true; sel.appendChild(o);
   }
-  $("mode").textContent = liveMode ? `מצב: מודל חי (${m.model}) + הדגמה מודרכת` : "מצב: הדגמה ללא מודל – שאלות חופשיות עוברות במסלול דטרמיניסטי (אחזור + MCP), ללא מפתח API";
-  $("meta").textContent = `${m.passages} פסקאות · כלי MCP: ${m.tools.join(", ")}`;
+  $("mode").textContent = liveMode ? `מצב: מודל חי (${m.model}) והדגמה מודרכת` : "מצב: הדגמה ללא מודל. שאלות חופשיות עוברות במסלול דטרמיניסטי של אחזור וכלי MCP, ללא מפתח API.";
+  $("meta").textContent = `${m.passages} פסקאות. כלי MCP: ${m.tools.join(", ")}`;
   $("examples").innerHTML = "";
   for (const ex of EXAMPLES) { const b = document.createElement("button"); b.textContent = ex; b.onclick = () => { $("input").value = ex; send(); }; $("examples").appendChild(b); }
   $("scenarios").innerHTML = "";
@@ -191,7 +191,7 @@ async function loadMeta() {
 }
 $("scenario").addEventListener("change", async e => {
   await post("/api/scenario", { name: e.target.value });
-  addMsg("bot", `תרחיש ההדגמה הוחלף ל: ${e.target.selectedOptions[0].textContent}. (זה משנה רק את מה שכלי get_service_status מחזיר.)`);
+  addMsg("bot", `תרחיש ההדגמה הוחלף ל: ${e.target.selectedOptions[0].textContent}. השינוי משפיע רק על מה שכלי get_service_status מחזיר.`);
 });
 $("newChat").addEventListener("click", async () => {
   if (sessionId) await post("/api/reset", { session_id: sessionId, message: "" });
@@ -214,9 +214,9 @@ function renderBot(r) {
     html += `<div class="sources">מקורות שאוחזרו בפועל (מסמכי הדגמה):` + r.sources.map(s =>
       `<details><summary>${escapeHtml(s.doc_title)} › ${escapeHtml(s.section_title)} <span class="muted">(${escapeHtml(s.id)}, גרסה ${escapeHtml(s.doc_version)})</span></summary><div class="excerpt">${escapeHtml(s.text)}</div></details>`).join("") + `</div>`;
   } else if (r.action === "answer") {
-    html += `<div class="sources">ללא ציטוט ממסמכים${r.tool_calls.some(t => t.tool === "get_service_status") ? " – מבוסס על כלי מצב השירות (הדגמה)" : ""}</div>`;
+    html += `<div class="sources">ללא ציטוט ממסמכים${r.tool_calls.some(t => t.tool === "get_service_status") ? ". התשובה מבוססת על כלי מצב השירות (הדגמה)." : "."}</div>`;
   }
-  if (r.case) html += `<div class="case">פניית הדגמה לנציג (נוצרה בפועל על ידי שרת ה-MCP): <b>${escapeHtml(r.case.case_id || "")}</b> · קטגוריה: ${escapeHtml(r.case.category || "")}<br>${escapeHtml(r.case.summary_he || "")}</div>`;
+  if (r.case) html += `<div class="case">פניית הדגמה <b>${escapeHtml(r.case.case_id || "")}</b> (קטגוריה: ${escapeHtml(r.case.category || "")}) נוצרה בפועל על ידי שרת ה-MCP ונשמרה בקובץ ההדגמה בלבד. היא אינה נשלחת לצוות שירות אמיתי ואיש לא ייצור קשר.<br>${escapeHtml(r.case.summary_he || "")}</div>`;
   if (r.steps && r.steps.length) html += `<div class="steps">מה קרה בפועל:<ol>${r.steps.map(s => `<li>${escapeHtml(s.detail_he)}</li>`).join("")}</ol></div>`;
   html += `<div class="tts"><button class="play">▶ השמעה</button><button class="stop">■ עצירה</button><span class="tts-note"></span></div>`;
   d.innerHTML = html;
@@ -226,13 +226,13 @@ function renderBot(r) {
   pickVoice();
 }
 
-function resetDev() { $("devMeta").textContent = "עדיין לא הורץ תרחיש."; $("flags").innerHTML = '<span class="muted">—</span>'; $("tools").innerHTML = '<span class="muted">—</span>'; $("hits").innerHTML = '<span class="muted">—</span>'; $("raw").textContent = "—"; }
+function resetDev() { $("devMeta").textContent = "עדיין לא הורץ תרחיש."; $("flags").innerHTML = '<span class="muted">אין</span>'; $("tools").innerHTML = '<span class="muted">אין</span>'; $("hits").innerHTML = '<span class="muted">אין</span>'; $("raw").textContent = "אין"; }
 function renderDev(r) {
   const scripted = r.response_kind === "predefined" || r.response_kind === "templated";
-  const head = r.response_kind === "predefined" ? `מצב: הדגמה מודרכת · תרחיש: ${r.scenario_id}`
-    : r.response_kind === "templated" ? `מצב: מסלול דטרמיניסטי ללא מודל · רמז "מצב חי" מהקוד: ${r.live_hint ? "כן" : "לא"}`
-    : `מצב: מודל חי · רמז "מצב חי" מהקוד: ${r.live_hint ? "כן" : "לא"} · טוקנים: ${r.usage.input_tokens} in / ${r.usage.output_tokens} out`;
-  $("devMeta").textContent = `${head} · מצב שירות: ${r.status_scenario || r.scenario} · פעולה: ${r.action}` + (r.note ? ` · הערה: ${r.note}` : "");
+  const head = r.response_kind === "predefined" ? `מצב: הדגמה מודרכת. תרחיש: ${r.scenario_id}`
+    : r.response_kind === "templated" ? `מצב: מסלול דטרמיניסטי ללא מודל. רמז "מצב חי" מהקוד: ${r.live_hint ? "כן" : "לא"}`
+    : `מצב: מודל חי. רמז "מצב חי" מהקוד: ${r.live_hint ? "כן" : "לא"}. טוקנים: ${r.usage.input_tokens} קלט / ${r.usage.output_tokens} פלט`;
+  $("devMeta").textContent = `${head}. מצב שירות: ${r.status_scenario || r.scenario}. פעולה: ${r.action}.` + (r.note ? ` הערה: ${r.note}` : "");
   $("flags").innerHTML = r.flags.length ? r.flags.map(f => `<span>${escapeHtml(f)}</span>`).join("") : '<span class="muted">אין דגלים</span>';
   $("tools").innerHTML = r.tool_calls.length ? r.tool_calls.map(t =>
     `<div class="tool ${t.is_error ? "error" : ""}"><span class="name">${escapeHtml(t.tool)}</span> · ${t.duration_ms} ms ${t.is_error ? "· שגיאה" : ""}<div class="muted">קלט</div><pre>${escapeHtml(JSON.stringify(t.input, null, 1))}</pre><div class="muted">פלט (נתוני הדגמה)</div><pre>${escapeHtml(pretty(t.output))}</pre></div>`).join("")

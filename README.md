@@ -1,26 +1,21 @@
-# AI Passenger Support Agent – Tel Aviv Red Line (demo)
+# AI Passenger Support Agent for the Tel Aviv Red Line (demo)
 
-A small, fully working portfolio project: a Hebrew text-and-voice support assistant for passengers of the
-Tel Aviv Red Line light rail. It answers payment questions, explains what to do during a service
-disruption, and helps at a station, **only from identified sources** (retrieved guidance passages and
-simulated operational tools reached over MCP), and it recognises when a human representative is needed.
+A Hebrew text and voice support assistant for passengers of the Tel Aviv Red Line light rail. It answers
+payment questions, explains what to do during a service disruption, and helps at a station. Every reply is
+built only from identified sources: retrieved guidance passages and simulated operational tools reached
+over MCP. When a question needs a human representative, the assistant says so and prepares a demo case.
 
 ![Screenshot of the demo UI](docs/screenshot.png)
 
 > **Everything operational in this project is demo data.** The guidance documents were written for this
-> project and are not official operator documents. The service status and the support cases are simulated.
-> The UI says so on every screen, and every reply carries a label saying how it was produced.
+> project and are not official operator documents. The service status feed and the support cases are
+> simulated. A demo case is stored in a local file only. It is not sent to any real service team, and nobody
+> contacts the passenger. The interface says so wherever a case appears.
 
-**Runs without an API key and without any language model.** The optional Claude integration is kept in the code
-as a future capability and is off unless you add a key.
-
-| Mode | Needs | What produces the reply |
-|---|---|---|
-| **Guided demo** (three cards) | Python only | A predefined text per scenario; retrieval and MCP calls are real |
-| **Free questions, typed or spoken** (default) | Python only | A deterministic workflow: verbatim quotes of retrieved passages + real MCP results, assembled by code |
-| Live mode (optional, costs API usage) | `ANTHROPIC_API_KEY` in `.env` | Claude decides which tool to call and writes the answer |
-
----
+The application runs without a language model and without any API key. Free questions, typed or spoken,
+go through a deterministic workflow: retrieval, rules, real MCP tool calls, and a reply assembled by code from
+verbatim quotes and tool results. A Claude based mode exists in the code as an optional path and is only
+active when an API key is configured (section 9).
 
 ## 1. The passenger problem
 
@@ -29,77 +24,83 @@ are running, needs three different kinds of help at once:
 
 | Need | Correct source | Wrong source |
 |---|---|---|
-| "What is the rule / what should I do?" | Written passenger guidance | General knowledge |
-| "Is the line running *right now*?" | A live status system | Any document, however recent |
-| "I want my money back / to appeal a fine" | A human representative | A chatbot promising an outcome |
+| "What is the rule, what should I do?" | Written passenger guidance | General knowledge |
+| "Is the line running right now?" | A live status system | Any document, however recent |
+| "I want my money back, or to appeal a fine" | A human representative | A chatbot promising an outcome |
 
 A plain chatbot blurs these. This project keeps the three sources separate and shows its work on every reply.
 
-## 2. Why RAG and MCP
+## 2. RAG and MCP in this project
 
-- **RAG (retrieval-augmented generation)** is for *stable* knowledge: rules and procedures. Retrieving and citing
-  passages makes a reply checkable and lets the system say "the documents do not cover this".
-- **MCP (Model Context Protocol)** is for *actions and live data*: checking current service status and preparing
-  a support case. These cannot live in documents and must be logged. Because they are MCP tools, the agent, the
-  developer panel and the evaluation all see the same calls and results, and the demo server could be replaced by
-  one that talks to a real operator system without touching the application.
+Retrieval augmented generation (RAG) covers stable knowledge: rules and procedures. Retrieving passages and
+citing them makes a reply checkable, and lets the system say "the documents do not cover this" instead of
+guessing. The documents are seven Hebrew Markdown files in `docs/`, split into 31 passages by heading.
 
-The key rule: **documents may describe what to do during a disruption, but only the status tool may say
-whether there is one.**
+The Model Context Protocol (MCP) covers actions and live data: checking the current service status and
+preparing a support case. These cannot live in documents and must be logged. The MCP server in
+`mcp_server/server.py` exposes two tools, `get_service_status` and `prepare_support_case`. The application
+discovers them at startup through an MCP client, forwards every call, and shows each call with its input and
+output in the developer panel and in the console.
+
+The key rule: documents may describe what to do during a disruption, but only the status tool may say
+whether there is one right now.
 
 ## 3. Architecture
 
 ```
-Passenger (Hebrew; typed, or spoken via the browser's speech recognition, transcript editable before sending)
-   │
-   ├─ guided card ─► POST /api/offline/run      ├─ free question ─► POST /api/offline/ask     ├─ (live) POST /api/chat
-   ▼                                            ▼                                             ▼
+Passenger (Hebrew, typed, or spoken through the browser's speech recognition with an editable transcript)
+   |
+   |  guided card: POST /api/offline/run      free question: POST /api/offline/ask      optional: POST /api/chat
+   v
 FastAPI app (app/server.py)
-   │
-   ├─ Retrieval ─── BM25 over docs/*.md split by "## " heading ──► top-4 passages with ids and scores
-   │                (app/rag.py: Hebrew final-letter normalisation, prefix stripping, small query synonym list,
-   │                 field weights: section title ×2, body ×1, document title ×0.25)
-   │
-   ├─ MCP client (app/mcp_client.py) ──stdio──► MCP server subprocess (mcp_server/server.py)
-   │        get_service_status(station?)  ← reads demo_status.json (4 switchable scenarios, incl. a feed outage)
-   │        prepare_support_case(...)     ← appends to demo_cases.json, returns DEMO-#### id
-   │
-   ├─ Reply assembly
-   │     offline_demo.py      guided cards: scripted tool calls, predefined text filled from real tool results
-   │     offline_workflow.py  free questions: regex rules decide live-status / handoff / clarify;
-   │                          reply = quotes of passages scoring ≥ 6 + status sentence + case id; else "unsupported"
-   │     agent.py (optional)  Claude tool loop; JSON {action, answer_he, sources}; citations validated in code
-   │
-   ▼
-Answer card: label (predefined / templated / model), action badge, Hebrew reply, cited passages with excerpts,
-             demo case id, "what actually happened" steps, ▶/■ text-to-speech controls
-Developer panel: retrieved passages + scores, every MCP call with input/output, code flags, model output or
-                 "no model call"
+   |
+   +-- Retrieval: BM25 over docs/*.md split by "## " heading, top 4 passages with ids and scores
+   |     app/rag.py: Hebrew final letter normalisation, prefix stripping, light suffix normalisation
+   |     (plurals and construct forms), a small passenger to document synonym list, field weights
+   |     (section title x2, body x1, document title x0.25), one score per question word
+   |
+   +-- MCP client (app/mcp_client.py) over stdio to the MCP server subprocess (mcp_server/server.py)
+   |     get_service_status(station?)  reads demo_status.json (4 switchable scenarios, incl. a feed outage)
+   |     prepare_support_case(...)     appends to demo_cases.json and returns a DEMO-#### id (demo only)
+   |
+   +-- Reply assembly
+   |     app/offline_demo.py      three guided cards: scripted tool calls, predefined text filled from tool results
+   |     app/offline_workflow.py  free questions: rules decide live status, handoff or clarification;
+   |                              the reply quotes passages that score 6 or more, adds the status sentence
+   |                              and the case id; otherwise it says the question is unsupported
+   |     app/agent.py (optional)  Claude tool loop, JSON reply, citations validated in code
+   |
+   v
+Reply card: label (predefined, templated or model), action badge, Hebrew text, cited passages with excerpts,
+            demo case id, the list of steps that actually ran, play and stop controls for text to speech
+Developer panel: retrieved passages with scores, every MCP call with input and output, code flags, and either
+                 the raw model output or a note that no model was called
 ```
 
-Actions: `answer` (grounded), `clarify` (one question back), `handoff` (a case was prepared through MCP),
-`unsupported` (documents do not support an answer; nothing invented).
+Every reply carries one of four actions: `answer` (grounded), `clarify` (one question back), `handoff`
+(a demo case was prepared through MCP), or `unsupported` (the documents do not support an answer, and nothing
+is invented).
 
 ## 4. Layout
 
 ```
 app/
-  server.py          FastAPI app and JSON API (guided cards, free questions, optional chat, scenario switch)
-  offline_demo.py    three guided scenarios (real retrieval + real MCP + predefined labelled replies)
-  offline_workflow.py deterministic free-question workflow (rules + quotes + MCP; no model)
-  agent.py           optional live mode (Claude tool loop + validation)
-  prompts.py         system prompt for live mode
-  rag.py             Markdown loader, heading chunker, Hebrew tokenizer, BM25
+  server.py          FastAPI app and JSON API
+  offline_demo.py    three guided scenarios (real retrieval, real MCP calls, predefined labelled replies)
+  offline_workflow.py deterministic free question workflow (rules, quotes, MCP; no model)
+  agent.py           optional Claude mode (tool loop and validation)
+  prompts.py         system prompt for the optional Claude mode
+  rag.py             Markdown loader, heading chunker, Hebrew tokenizer, BM25 with field weights
   mcp_client.py      spawns the MCP server, discovers tools, forwards calls, logs them
   config.py          paths, thresholds, model settings
-  static/index.html  Hebrew RTL UI, speech recognition, text-to-speech, developer panel (vanilla JS)
-mcp_server/          MCP server + demo_status.json (demo_cases.json is created at runtime, git-ignored)
-docs/                7 demo guidance documents (Hebrew) + README + screenshot
-eval/                cases.json (24 cases), run_eval.py, results.md (measured)
-tests/               test_agent_offline.py (live agent loop with a stub model + real MCP server)
+  static/index.html  Hebrew RTL interface, speech recognition, text to speech, developer panel
+mcp_server/          MCP server and demo_status.json (demo_cases.json is created at runtime and git-ignored)
+docs/                seven demo guidance documents (Hebrew), a README about them, and the screenshot
+eval/                cases.json, run_eval.py, results.md (measured output of the last run)
+tests/               test_agent_offline.py (the optional Claude loop with a stub model and the real MCP server)
 ```
 
-## 5. Run it locally (no API key)
+## 5. Running it
 
 Requirements: Python 3.10 or newer. Tested on Windows 11 with Python 3.10 and the packages in `requirements.txt`.
 
@@ -111,16 +112,15 @@ pip install -r requirements.txt
 python run.py
 ```
 
-Open <http://127.0.0.1:8000>. The console shows:
+Open <http://127.0.0.1:8000>. The console shows the MCP server starting and its tools being discovered:
 
 ```
 [mcp-server] starting on stdio
 [mcp-client] connected; tools: ['get_service_status', 'prepare_support_case']
 [app] 31 passages indexed from ...\docs
-[app] WARNING: no ANTHROPIC_API_KEY - chat endpoint will return an error
 ```
 
-The header reads **"מצב: הדגמה ללא מודל"**. Every MCP call is printed as `[mcp-client] <tool>({...}) -> {...}`.
+Every MCP call is printed as `[mcp-client] <tool>({...}) -> {...}`.
 
 Without a browser:
 
@@ -136,117 +136,116 @@ python -m eval.run_eval
 python -m tests.test_agent_offline
 ```
 
-Deep links for demos and screenshots: `/?autorun=payment_rag,status_mcp,handoff_mcp` runs the guided cards;
-`/?ask=<question>` submits a free question.
+Deep links: `/?autorun=payment_rag,status_mcp,handoff_mcp` runs the guided cards, and `/?ask=<question>` submits
+a free question.
 
-## 6. Voice interface
+## 6. Using it
 
-- **Speech to text:** the 🎤 button uses the browser's Web Speech API (`SpeechRecognition`, language `he-IL`).
-  The transcript is written into the text box while you speak; you can correct it and then press send. Where the
-  API is missing, the button is disabled with an explanation and typing works as before.
-- **Text to speech:** each reply has ▶ and ■ controls using `speechSynthesis` with a Hebrew (`he-*`) voice if one is
-  installed. Without a Hebrew voice the play button is disabled and the reply says so; the text stays usable.
-- A spoken question is treated exactly like a typed one: it goes through retrieval and the MCP workflow. It is not
-  mapped to one of the guided cards.
+The page has three guided cards at the top and a text box below them.
 
-Speech recognition in Chromium browsers is processed by the browser vendor's service, needs microphone permission,
-and is not available in every browser. See section 8 for what was and was not verified.
+**Guided cards.** Each card runs one fixed question through real retrieval and, where the scenario calls for
+it, a real MCP tool call. The reply text is predefined and labelled as such. The second card switches the
+simulated status feed to "segment closed" and calls `get_service_status`. The third card calls
+`prepare_support_case`; the MCP server writes a demo case and returns an id such as `DEMO-0001`, which appears
+in the reply and in the cases list of the developer panel.
 
-## 7. Two-minute walkthrough for a recruiter
+**Free questions.** Anything typed or spoken into the text box goes through the deterministic workflow. The
+reply is labelled as templated, and the "what actually happened" list under it names every step that ran.
+Examples:
 
-Start `python run.py`, open the page.
+| Question | What happens |
+|---|---|
+| אפשר לשלם במזומן ברכבת? | The payment methods passage is retrieved and quoted. No tool is called. |
+| המעלית באלנבי עובדת כרגע? | The question is recognised as live and names a station, so `get_service_status` is called for אלנבי. With the status feed set to "elevator out", the reply reports the outage and the nearest accessible station from the tool result, and quotes the accessibility passage. |
+| עד מתי אפשר להגיש בקשת החזר על חיוב שגוי? | Two document versions disagree (14 versus 30 days). Both are quoted with their sources, and a demo case is prepared for a human to confirm. |
+| כמה עולה חופשי חודשי לסטודנטים? | No document states a price, so the reply says price information is not available in the documents. |
+| לא עבד לי | Too short to route, so the reply asks what the question is about. |
+| קיבלתי קנס למרות שתיקפתי, אני רוצה לערער | Fine appeals go to a human, so `prepare_support_case` is called and the demo case id is shown. |
 
-1. **Guided card 1 – payment (RAG).** Press "הרצת התרחיש" on *"אפשר לשלם במזומן ברכבת?"*. The developer panel shows
-   four BM25 passages with scores; the cited one is green. No tool was called, and the panel says so.
-2. **Guided card 2 – status (real MCP).** The scenario flips the simulated feed to "segment closed" and calls
-   `get_service_status` for real; the panel shows the call and the JSON that came back, and the reply's first
-   sentence is filled from it.
-3. **Guided card 3 – handoff (real MCP).** `prepare_support_case` runs for real and returns an id such as
-   `DEMO-0001`, shown in the reply and in the cases list.
-4. **Ask your own question, typed or spoken.** For example *"המעלית באלנבי עובדת כרגע?"* after switching the
-   feed to "elevator out". The workflow detects a live question and a station, calls the status tool, quotes the
-   accessibility passage, and labels the reply as templated. Try *"לא עבד לי"* to see a clarifying question, and
-   *"כמה זמן שומרים חפצים באבדות ומציאות?"* to see an honest "the document says this is unspecified".
+The status feed scenario can be switched in the header: normal service, a closed segment with replacement
+buses, an elevator outage at אלנבי, and a feed outage in which the tool returns an error and the reply says
+the status could not be verified.
 
-What to say: the retrieval, the MCP tool discovery and calls, the citation validation and the logging are the
-product; the reply text in offline mode is assembled by code and labelled as such.
+## 7. Voice interface
+
+- **Speech to text.** The microphone button uses the browser's Web Speech API (`SpeechRecognition`) with the
+  language set to `he-IL`. The transcript is written into the text box as you speak. You can correct it and then
+  press send. When the API is missing, the button is disabled with an explanation and typing works as before.
+- **Text to speech.** Each reply has play and stop controls that use `speechSynthesis` with a Hebrew voice if
+  one is installed in the browser. Without a Hebrew voice the play control is disabled and the reply says so.
+- A spoken question is handled exactly like a typed one. It goes through the same retrieval and MCP workflow,
+  and it is not mapped to one of the guided cards.
+
+**Verification status.** The controls are implemented, but real microphone capture and audible Hebrew playback
+have not yet been verified in a normal browser. In the embedded Chromium browser used during development, the
+`SpeechRecognition` API was present and the microphone button was active. Pressing it requested the microphone,
+which that environment blocks, and the page showed "שגיאת זיהוי דיבור: not-allowed" with the typing fallback
+still working. `speechSynthesis` was present with three English voices and no Hebrew voice, so the play control
+was correctly disabled. The workflow behind the voice controls was exercised by submitting spoken style questions
+through the same text box. This project should not be described as a verified conversational voice agent. It is
+a text workflow with voice input and output controls that still need a check in a regular Chrome or Edge window
+with microphone permission and an installed Hebrew voice.
 
 ## 8. What was measured
 
-`eval/cases.json` holds 24 original cases (ordinary, live status incl. a feed outage, ambiguous incl. a two-turn
-flow, missing information, conflicting documents, handoff, one safety case with a pasted card number) plus 10
-holdout paraphrases marked `"holdout": true`. Checks are deterministic (actions, tools called or not, cited
-documents, required or forbidden strings). No LLM judge.
-Full output: [`eval/results.md`](eval/results.md).
+`eval/cases.json` holds three groups of questions. All checks are deterministic (allowed actions, tools that must
+or must not be called, cited documents, required or forbidden strings). There is no LLM judge. The full output of
+the last run is in [`eval/results.md`](eval/results.md).
 
-| Part | What | Result (last run) |
+| Part | What | Result |
 |---|---|---|
-| A | Retrieval: expected document in top 4 | 15/15 |
-| B | Live agent (Claude) on 24 cases | **Not run** (no API key used in this project) |
-| C | Guided cards: sources retrieved, MCP calls succeeded, case id returned | 3/3 |
-| D | Deterministic free-question workflow on the original 24 cases (available while the rules were tuned) | 23/24 |
-| E | Same workflow on 10 holdout paraphrases written afterwards, never used for tuning | 7/10 |
+| A | Retrieval: expected document among the top 4 passages (15 cases with an expected document) | 15/15 |
+| B | Optional Claude mode on the original 24 cases | Not run (no API key configured) |
+| C | Guided cards: cited passages retrieved, MCP calls succeeded, demo case id returned | 3/3 |
+| D | Deterministic workflow on the original 24 cases | 24/24 |
+| E | Deterministic workflow on 10 additional paraphrase cases | 10/10 (7/10 when first run, before later rule changes) |
+| F | Deterministic workflow on 12 blind questions, written after the rules were frozen and run once | 8/12 |
 
-Part D failure, as measured: `amb_04` (two-turn follow-up "the credit card was not read at the gate"): the reply
-quotes the "personal details" section of the escalation policy, which mentions credit cards, instead of the
-"reader not responding" section, because the passenger's verb (נקלט) does not occur in that section.
+How to read these numbers:
 
-Part E failures, as measured: `new_04` (a small dog on the train: the animals section scores below the quote
-threshold, so the reply is an honest "unsupported"), `new_07` (a train that gets stuck: the reply quotes the
-replacement-bus section rather than the "train stopped between stations" section, because נתקעת ≠ נעצרת), and
-`new_08` ("I want my money back": no handoff rule covers this phrasing, so no case is prepared). Part E also
-showed the live-status regex over-triggering on "בשעות הבוקר" in a bicycle question (`new_01` still passed).
+- The original 24 cases were available while the rules and the quote threshold were being set, so Part D is not
+  a blind test.
+- The 10 paraphrase cases were added after the first version of the rules, but before later rule changes, and
+  their results were consulted while debugging. They are additional cases, not a holdout set. When they were first
+  run they scored 7/10; the three failures at that stage (a small dog, a train stopped between stations, and
+  "I want my money back") were fixed with general changes: light suffix normalisation for plurals and construct
+  forms, stopwords excluded from the section matching rules, a small synonym list from passenger verbs to document
+  verbs, refund phrasing in the handoff rules, and a schedule exception ("בשעות הבוקר") in the live status rule.
+  The eval expectations were not changed.
+- The 12 blind questions were written after those changes, run once, and the rules were not touched afterwards.
+  Its four failures, kept as measured: "מותר לאכול סנדוויץ' ברכבת?" (the verb לאכול does not match the noun אכילה
+  in the document, so the reply is "unsupported"); "הנהג סגר לי את הדלת על היד ונפצעתי" (no handoff rule covers
+  injuries, and the reply quotes an unrelated passage about a train stopped between stations); "הטלפון שלי לא
+  סרק את הקוד בכניסה" (the reply quotes the payment methods list rather than the reader help section); and
+  "החזירו לי רק חצי מהחיוב הכפול, מגיע לי את השאר" (this refund phrasing is not covered by the handoff rules, so no
+  case is prepared).
+- The blind safety question with a four digit password passed its check on the reply text, but the demo case
+  summary stores the passenger's question verbatim, so anything typed into a handoff question ends up in the
+  demo case file. Only long digit runs that look like card numbers are removed.
 
-Two earlier Part D failures were fixed with general rules rather than per-question patches: field-weighted
-BM25 (section title ×2, body ×1, document title ×0.25, one score per question word) plus "quote only sections
-whose own title contains a question word when such sections exist", and a price rule ("price question with no
-passage stating a price → unsupported"). The eval assertions were not changed for these fixes.
+No business impact figures are claimed.
 
-Browser verification of the voice interface (Chromium 148 embedded browser, Windows 11, 2026-09-15):
+## 9. Optional Claude mode
 
-- `SpeechRecognition` was present and the 🎤 button active. Pressing it requested the microphone, which that
-  environment blocks; the page showed "שגיאת זיהוי דיבור: not-allowed – אפשר להקליד במקום" and typing kept working.
-  **Real speech capture was therefore not exercised**; it needs a normal Chrome/Edge window with microphone permission.
-- `speechSynthesis` was present with three English voices and no Hebrew voice, so ▶ was disabled with the note
-  "אין קול עברי מותקן בדפדפן". Audio playback was not exercised.
-- Three differently phrased questions were submitted through the same text box the transcript lands in and routed
-  through the workflow: *"איך משלמים על הנסיעה, אפשר עם כרטיס אשראי?"* (answer, two payment passages quoted, no
-  tool), *"יש עיכובים בקו כרגע? אני צריכה להגיע לאלנבי"* with the feed set to "segment closed" (real
-  `get_service_status` call for אלנבי, closed segment and replacement bus reported), and *"חייבו אותי פעמיים על אותה
-  נסיעה אתמול, מה עושים?"* (handoff, real `prepare_support_case` call, case `DEMO-0002`).
+The code in `app/agent.py` sends the question, the retrieved passages and the discovered MCP tools to Claude
+(`claude-opus-5`, a hand written tool loop), and validates the returned citations against what was retrieved.
+It is used only when `ANTHROPIC_API_KEY` is set. To enable it, copy `.env.example` to `.env`, set the key, and
+restart. The header then reads "מודל חי", the text box routes to Claude, and `python -m eval.run_eval` also runs
+Part B. This mode has not been evaluated in this repository, and Part B is reported as not run.
 
-No business-impact figures are claimed.
+## 10. Limitations
 
-## 9. Limitations
-
-- **Offline replies are assembled by rules.** They quote documents verbatim and report tool results; they do not
-  understand paraphrase. The threshold (`MIN_PASSAGE_SCORE = 6.0`) and the regex rules are visible in
-  `app/offline_workflow.py` and were tuned on the original 24 cases, so Part D is not a blind test; Part E
-  (holdout paraphrases) is the honest number, and its failures show the kinds of phrasing the rules miss.
-- **Demo documents**, invented for the project; nothing in the code assumes their content except the eval cases,
-  the guided scenarios and the conflict pair (`refunds_v2` vs `refunds_v1_old`).
-- **Lexical retrieval** (BM25 with prefix stripping and a hand-made synonym list). Embeddings or hybrid retrieval
-  would improve recall on free-form Hebrew.
-- **Voice depends on the browser**: recognition needs a browser that implements the Web Speech API and microphone
-  permission; Hebrew text-to-speech needs an installed Hebrew voice.
-- **Single process, in-memory sessions**; simulated tools backed by JSON files; no streaming.
-- **Live mode is unmeasured here.** Part B exists but was not run.
-
-## 10. Decisions an interviewer may ask about
-
-- **Why a deterministic offline path instead of a small local model?** The demo is about grounding: retrieval,
-  MCP discovery and calls, validation, logging. Rules plus verbatim quotes keep every reply traceable and cost
-  nothing; a weak local model would add unverifiable text.
-- **Why a hand-written tool loop for live mode?** ~40 lines, fully visible; the validation after the loop is the point.
-- **Why BM25?** 31 passages, Hebrew, explainability; every score is shown in the UI.
-  Swapping in embeddings is a one-class change.
-- **Why validate citations even for scripted replies?** Any reply can cite a passage retrieval never returned;
-  dropping and flagging is cheaper than trust.
-- **Why MCP for two small tools?** The app only knows tool names and schemas discovered at startup; replacing the
-  demo server with one that calls a real status API changes no application code.
-
-## 11. Optional live mode
-
-Copy `.env.example` to `.env`, set a real `ANTHROPIC_API_KEY`, restart. The header switches to "מודל חי", the
-text box routes to Claude (`claude-opus-5`, manual tool loop in `app/agent.py`), and `python -m eval.run_eval`
-additionally runs Part B. This costs API usage; nothing else in the project does.
+- **Offline replies are assembled by rules.** They quote documents verbatim and report tool results. They do not
+  understand paraphrase, and Part F shows the kinds of phrasing they miss.
+- **Demo documents.** The guidance is invented for the project. Nothing in the code assumes its content except
+  the eval cases, the guided scenarios, and the pair of documents that is deliberately kept in conflict
+  (`refunds_v2` and `refunds_v1_old`).
+- **Lexical retrieval.** BM25 with light normalisation and a hand written synonym list. Embeddings or hybrid
+  retrieval would improve recall on free form Hebrew.
+- **Voice depends on the browser.** Recognition needs a browser that implements the Web Speech API and
+  microphone permission. Hebrew text to speech needs an installed Hebrew voice. Neither has been verified in a
+  normal browser yet.
+- **Demo cases are local.** They are written to `mcp_server/demo_cases.json` and nowhere else.
+- **Single process, in memory sessions.** Restarting the server clears conversation history. There is no
+  streaming.
+- **The optional Claude mode is unmeasured here.**

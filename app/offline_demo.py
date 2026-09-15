@@ -22,12 +22,12 @@ from . import config
 from .mcp_client import MCPBridge
 from .rag import BM25Retriever, load_passages
 
-PREDEFINED_LABEL_HE = "תשובה מוגדרת מראש (מצב הדגמה ללא מודל) – לא נוצרה על ידי מודל שפה"
+PREDEFINED_LABEL_HE = "תשובה מוגדרת מראש במצב הדגמה ללא מודל. היא לא נוצרה על ידי מודל שפה."
 
 SCENARIOS: list[dict] = [
     {
         "id": "payment_rag",
-        "title_he": "1. שאלת תשלום – אחזור ממסמכים (RAG)",
+        "title_he": "1. שאלת תשלום: אחזור ממסמכים (RAG)",
         "intro_he": "השאלה עוברת אחזור אמיתי (BM25) במסמכי ההדגמה. לא נקרא אף כלי MCP. התשובה מוגדרת מראש ומצטטת רק פסקאות שאוחזרו בפועל.",
         "question": "אפשר לשלם במזומן ברכבת?",
         "status_scenario": "normal",
@@ -42,7 +42,7 @@ SCENARIOS: list[dict] = [
     },
     {
         "id": "status_mcp",
-        "title_he": "2. שאלת מצב שירות – קריאה אמיתית לכלי MCP",
+        "title_he": "2. שאלת מצב שירות: קריאה אמיתית לכלי MCP",
         "intro_he": "התרחיש מעביר את מערכת מצב השירות (הדגמה) למצב \"קטע סגור\", מריץ אחזור, ואז קורא בפועל לכלי get_service_status בשרת ה-MCP. התשובה היא תבנית מוגדרת מראש שממולאת בערכים שהכלי החזיר.",
         "question": "אני בארלוזורוב ורוצה להגיע לאלנבי. יש רכבות עכשיו או שיש שיבוש בקטע?",
         "status_scenario": "segment_closed",
@@ -56,8 +56,8 @@ SCENARIOS: list[dict] = [
     },
     {
         "id": "handoff_mcp",
-        "title_he": "3. העברה לנציג – הכנת פנייה דרך MCP",
-        "intro_he": "האחזור מוצא את מדיניות ההסלמה (ערעור על קנס מטופל על ידי נציג אנושי). הקוד קורא בפועל לכלי prepare_support_case בשרת ה-MCP, שמייצר פניית הדגמה ומחזיר מספר פנייה. התשובה מוגדרת מראש ומשלבת את מספר הפנייה האמיתי שהכלי החזיר.",
+        "title_he": "3. העברה לנציג: הכנת פניית הדגמה דרך MCP",
+        "intro_he": "האחזור מוצא את מדיניות ההסלמה (ערעור על קנס מטופל על ידי נציג אנושי). הקוד קורא בפועל לכלי prepare_support_case בשרת ה-MCP, שמייצר פניית הדגמה ומחזיר מספר פנייה. הפנייה נשמרת במערכת ההדגמה בלבד ואינה נשלחת לצוות שירות אמיתי. התשובה מוגדרת מראש ומשלבת את מספר הפנייה שהכלי החזיר.",
         "question": "קיבלתי קנס למרות שתיקפתי, אני רוצה לערער",
         "status_scenario": "normal",
         "tool_calls": [{
@@ -72,9 +72,9 @@ SCENARIOS: list[dict] = [
         "action": "handoff",
         "sources": ["escalation_policy#1", "escalation_policy#3"],
         "response_template_he": (
-            "ערעור על קנס מטופל על ידי נציג אנושי בלבד, ולכן הכנתי פנייה. מספר הפנייה (הדגמה): {case_id}. "
-            "נציג יחזור אליך. כדי לזרז את הטיפול כדאי להוסיף תחנה, שעה ואמצעי התשלום שבו תיקפת. "
-            "אני לא יכול לקבוע אם הקנס יבוטל."
+            "ערעור על קנס מטופל על ידי נציג אנושי בלבד, ולכן הוכנה פניית הדגמה מספר {case_id}. "
+            "הפנייה נשמרת במערכת ההדגמה בלבד ואינה נשלחת לצוות שירות אמיתי. "
+            "בפנייה אמיתית כדאי לצרף תחנה, שעה ואמצעי התשלום שבו תיקפת. אני לא יכול לקבוע אם הקנס יבוטל."
         ),
     },
 ]
@@ -112,7 +112,7 @@ async def run_scenario(scenario_id: str, retriever: BM25Retriever, bridge: MCPBr
     tool_error: str | None = None
     for call in s["tool_calls"]:
         text, is_error = await bridge.call_tool(call["tool"], call["args"])
-        steps.append({"step": "mcp_call", "detail_he": f"קריאה אמיתית לכלי MCP {call['tool']} – {'שגיאה' if is_error else 'הצליחה'}."})
+        steps.append({"step": "mcp_call", "detail_he": f"קריאה אמיתית לכלי MCP {call['tool']}: {'שגיאה' if is_error else 'הצליחה'}."})
         if is_error:
             tool_error = f"{call['tool']}: {text}"
             continue
