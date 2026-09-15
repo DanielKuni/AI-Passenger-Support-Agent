@@ -1,0 +1,16 @@
+# secrets
+.env
+# generated at runtime
+mcp_server/demo_cases.json
+eval/results_raw.json
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+# local tooling
+.claude/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

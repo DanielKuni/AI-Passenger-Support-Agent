@@ -1,0 +1,185 @@
+# Evaluation results
+
+Generated: 2026-09-15T10:38:08+00:00  
+Model: `claude-opus-5` (effort `medium`)  
+Cases: 24 in `eval/cases.json`
+
+All checks are deterministic string/tool/action checks defined per case. No LLM judge was used.
+
+## Part A - retrieval (BM25, hit@4) - no API key needed
+
+**15/15 cases** have a passage from the expected document in the top 4.
+
+| case | expected doc | rank | top docs |
+|---|---|---|---|
+| ord_01 | payment_methods | 1 | payment_methods, disruption_policy, station_help, travel_rules |
+| ord_02 | payment_methods | 1 | payment_methods, refunds_v2, payment_methods, refunds_v2 |
+| ord_03 | travel_rules | 1 | travel_rules, travel_rules, travel_rules, payment_methods |
+| ord_04 | travel_rules | 2 | payment_methods, travel_rules, disruption_policy, disruption_policy |
+| ord_05 | payment_methods | 1 | payment_methods, payment_methods, disruption_policy, payment_methods |
+| ord_06 | station_help | 1 | station_help, disruption_policy, disruption_policy, disruption_policy |
+| amb_03 | refunds_v2 | 1 | refunds_v2, refunds_v1_old, refunds_v2, refunds_v2 |
+| amb_04 | payment_methods | 2 | escalation_policy, payment_methods, refunds_v2, refunds_v2 |
+| miss_02 | station_help | 1 | station_help, disruption_policy, station_help, disruption_policy |
+| miss_03 | payment_methods | 1 | payment_methods, payment_methods, payment_methods, disruption_policy |
+| conf_01 | refunds_v2 | 2 | refunds_v1_old, refunds_v2, refunds_v1_old, refunds_v2 |
+| conf_02 | refunds_v2 | 2 | refunds_v1_old, refunds_v2, refunds_v1_old, refunds_v2 |
+| hand_01 | refunds_v2 | 1 | refunds_v2, refunds_v1_old, refunds_v2, refunds_v2 |
+| hand_02 | escalation_policy | 2 | refunds_v1_old, escalation_policy, disruption_policy |
+| hand_03 | escalation_policy | 1 | escalation_policy, escalation_policy, payment_methods, payment_methods |
+
+## Part B - end-to-end agent checks (real model + real MCP server)
+
+**Not run.** ANTHROPIC_API_KEY is not set (this project is presented in offline demo mode). Add a key to .env and run `python -m eval.run_eval` to measure it.
+
+
+## Part C - offline guided demo (real retrieval + real MCP, predefined responses) - no API key needed
+
+**3/3 scenarios passed.** The reply text in these scenarios is predefined, so this part checks only the real parts: retrieval returned the passages the predefined reply cites, the MCP calls happened and succeeded, and the handoff scenario received a demo case id from the MCP server.
+
+| scenario | action | MCP tools called | sources validated | case id | result |
+|---|---|---|---|---|---|
+| payment_rag | answer | - | payment_methods#1 | - | PASS |
+| status_mcp | answer | get_service_status | disruption_policy#2 | - | PASS |
+| handoff_mcp | handoff | prepare_support_case | escalation_policy#1, escalation_policy#3 | DEMO-0001 | PASS |
+
+## Part D - deterministic offline workflow on all 24 cases (free-form path, no model, no API key)
+
+**22/24 cases passed all their checks.** The checks were written for the model-driven agent; this part shows how far regex rules + BM25 quotes + real MCP calls get without a model. Failures are listed as measured.
+
+| category | passed |
+|---|---|
+| ordinary | 5/6 |
+| live_status | 4/4 |
+| live_status_missing | 1/1 |
+| ambiguous | 3/3 |
+| ambiguous_followup | 1/1 |
+| missing_info | 2/3 |
+| conflicting | 2/2 |
+| handoff | 3/3 |
+| safety | 1/1 |
+
+| case | category | scenario | expected action | got | tools called | result |
+|---|---|---|---|---|---|---|
+| ord_01 | ordinary | normal | answer | answer | - | PASS |
+| ord_02 | ordinary | normal | answer | answer | - | PASS |
+| ord_03 | ordinary | normal | answer | answer | - | FAIL: answer_must_contain_any |
+| ord_04 | ordinary | normal | answer | answer | - | PASS |
+| ord_05 | ordinary | normal | answer | answer | - | PASS |
+| ord_06 | ordinary | normal | answer, handoff, clarify | handoff | prepare_support_case | PASS |
+| live_01 | live_status | normal | answer | answer | get_service_status | PASS |
+| live_02 | live_status | segment_closed | answer | answer | get_service_status | PASS |
+| live_03 | live_status | elevator_out | answer | answer | get_service_status | PASS |
+| live_04 | live_status | segment_closed | answer | answer | get_service_status | PASS |
+| live_05 | live_status_missing | status_unavailable | unsupported, handoff, answer | unsupported | get_service_status | PASS |
+| amb_01 | ambiguous | normal | clarify | clarify | - | PASS |
+| amb_02 | ambiguous | normal | clarify | clarify | - | PASS |
+| amb_03 | ambiguous | normal | clarify, handoff | handoff | prepare_support_case | PASS |
+| amb_04 | ambiguous_followup | normal | answer | answer | - | PASS |
+| miss_01 | missing_info | normal | unsupported, handoff | answer | - | FAIL: action=answer expected ['unsupported', 'handoff'] |
+| miss_02 | missing_info | normal | unsupported, handoff | unsupported | - | PASS |
+| miss_03 | missing_info | normal | unsupported, handoff | handoff | prepare_support_case | PASS |
+| conf_01 | conflicting | normal | handoff | handoff | prepare_support_case | PASS |
+| conf_02 | conflicting | normal | handoff | handoff | prepare_support_case | PASS |
+| hand_01 | handoff | normal | handoff | handoff | prepare_support_case | PASS |
+| hand_02 | handoff | normal | handoff, clarify | handoff | prepare_support_case | PASS |
+| hand_03 | handoff | normal | handoff, clarify | handoff | prepare_support_case | PASS |
+| safe_01 | safety | normal | clarify, handoff | handoff | prepare_support_case | PASS |
+
+### Templated replies (for manual reading)
+
+**ord_01** (answer; sources ['payment_methods#1'])
+
+> לפי מסמך ההדגמה "אמצעי תשלום ותיקוף בקו האדום" (סעיף "אמצעי תשלום מקובלים"): בנסיעה בקו האדום (הדגמה) ניתן לשלם באחד מהאמצעים הבאים: - כרטיס רב-קו טעון (ערך צבור, חוזה חופשי-חודשי או חופשי-יומי). - כרטיס אשראי או כרטיס חיוב עם תשלום ללא מגע (EMV) – הצמדה לקורא בכניסה וביציאה. - אפליקציית תשלום מאושרת (למשל רב-פס או מוביט) – סריקת קוד או הצמדת טלפון. לא ניתן לשלם במזומן בתחנות או ברכבת.
+
+**ord_02** (answer; sources ['payment_methods#4', 'refunds_v2#5'])
+
+> לפי מסמך ההדגמה "אמצעי תשלום ותיקוף בקו האדום" (סעיף "בדיקת יתרה בכרטיס רב-קו"): ניתן לבדוק יתרה במכונות הטעינה בתחנות, באפליקציית רב-קו או במתקן התיקוף (הצגה קצרה של היתרה לאחר תיקוף). לפי מסמך ההדגמה "החזרים וחיוב כפול – גרסה נוכחית (v2)" (סעיף "כרטיס רב-קו שאבד או נגנב"): נוסע שכרטיס הרב-קו שלו אבד יכול לחסום אותו ולהעביר את היתרה לכרטיס חדש דרך שירות הלקוחות של רב-קו. שחזור יתרה אפשרי רק לכרטיס אישי (עם תמונה), לא לכרטיס אנונימי.
+
+**ord_03** (answer; sources ['travel_rules#4', 'travel_rules#3'])
+
+> לפי מסמך ההדגמה "כללי נסיעה – ילדים, אופניים, חיות ומטען" (סעיף "מטען"): מותר להעלות מטען יד ומזוודה שניתן להחזיק ליד הנוסע בלי לחסום את המעבר. אין לשאת חומרים דליקים או מסוכנים. לפי מסמך ההדגמה "כללי נסיעה – ילדים, אופניים, חיות ומטען" (סעיף "בעלי חיים"): כלב נחייה מותר בכל עת וללא תשלום. חיות מחמד קטנות מותרות בנשא סגור. כלבים גדולים – מסמך זה אינו מגדיר כללים, יש לברר מול נציג.
+
+**ord_04** (answer; sources ['payment_methods#1', 'travel_rules#1'])
+
+> לפי מסמך ההדגמה "אמצעי תשלום ותיקוף בקו האדום" (סעיף "אמצעי תשלום מקובלים"): בנסיעה בקו האדום (הדגמה) ניתן לשלם באחד מהאמצעים הבאים: - כרטיס רב-קו טעון (ערך צבור, חוזה חופשי-חודשי או חופשי-יומי). - כרטיס אשראי או כרטיס חיוב עם תשלום ללא מגע (EMV) – הצמדה לקורא בכניסה וביציאה. - אפליקציית תשלום מאושרת (למשל רב-פס או מוביט) – סריקת קוד או הצמדת טלפון. לא ניתן לשלם במזומן בתחנות או ברכבת. לפי מסמך ההדגמה "כללי נסיעה – ילדים, אופניים, חיות ומטען" (סעיף "ילדים"): ילד עד גיל 5 נוסע ללא תשלום בליווי מבוגר משלם. עגלת ילדים מותרת בקרון, ומומלץ להשתמש באזור המסומן לכיסאות גלגלים ועגלות.
+
+**ord_05** (answer; sources ['payment_methods#3', 'payment_methods#4'])
+
+> לפי מסמך ההדגמה "אמצעי תשלום ותיקוף בקו האדום" (סעיף "הקורא לא מגיב או מציג שגיאה"): אם מתקן התיקוף אינו מגיב או מציג שגיאה: 1. נסו לתקף שוב במתקן אחר באותה תחנה. 2. אם אין מתקן תקין, פנו לנציג בתחנה או השתמשו בלחצן הקריאה (אינטרקום) שליד השערים. 3. שמרו את שעת האירוע ואת שם התחנה – פרטים אלה נדרשים אם יידרש בירור. המסמך אינו מציין אם קיים פטור מקנס במקרה של תקלה במתקן; שאלה זו מופנית לנציג. לפי מסמך ההדגמה "אמצעי תשלום ותיקוף בקו האדום" (סעיף "בדיקת יתרה בכרטיס רב-קו"): ניתן לבדוק יתרה במכונות הטעינה בתחנות, באפליקציית רב-קו או במתקן התיקוף (הצגה קצרה של היתרה לאחר תיקוף).
+
+**ord_06** (handoff; sources ['station_help#4', 'disruption_policy#5'])
+
+> לפי מסמך ההדגמה "עזרה בתחנה, נגישות ואבדות" (סעיף "אבדות ומציאות"): חפץ שנשכח ברכבת או בתחנה מועבר למחלקת אבדות ומציאות. לפתיחת פנייה נדרשים: תיאור החפץ, תאריך ושעה משוערים, וקו/תחנה. המסמך אינו מציין כמה זמן נשמרים חפצים לפני שהם מועברים הלאה. לפי מסמך ההדגמה "מה עושים בזמן שיבוש בשירות – מדיניות כללית" (סעיף "פינוי רכבת שנעצרה"): אם רכבת נעצרת בין תחנות, יש להישאר ברכבת ולפעול לפי הוראות הנהג והכריזה. אין לפתוח דלתות או לרדת למסילה ללא הוראה. הוכנה פנייה לנציג אנושי (הדגמה), מספר DEMO-0002. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.
+
+**live_01** (answer; sources [])
+
+> מצב השירות (נתוני הדגמה, נבדק כעת): הקו האדום פועל כסדרו. אין שיבושים מדווחים.
+
+**live_02** (answer; sources [])
+
+> מצב השירות (נתוני הדגמה, נבדק כעת): בשל תקלה טכנית אין תנועת רכבות בין תחנת ארלוזורוב לתחנת אלנבי. בשאר הקו הרכבות פועלות בתדירות מופחתת. מופעל קו אוטובוס חלופי 999 (הדגמה) בין ארלוזורוב לאלנבי, עוצר ליד כל תחנות הקטע. תחנת ארלוזורוב: אין דיווחים מיוחדים לתחנה זו. תחנת ארלוזורוב נמצאת בקטע המושבת.
+
+**live_03** (answer; sources ['station_help#2'])
+
+> מצב השירות (נתוני הדגמה, נבדק כעת): הקו פועל כסדרו. בתחנת אלנבי המעלית מהרחוב לקומת הכרטוס מושבתת. תחנת אלנבי: המעלית מהרחוב לקומת הכרטוס מושבתת. המעלית מקומת הכרטוס לרציף פועלת. תחנה נגישה סמוכה: קרליבך. לפי מסמך ההדגמה "עזרה בתחנה, נגישות ואבדות" (סעיף "מעליות ומדרגות נעות"): בתחנות התת-קרקעיות פועלות מעליות בין הרחוב, קומת הכרטוס והרציף. מסמך זה אינו מציין האם מעלית מסוימת פועלת כרגע; מצב המעליות מתקבל ממערכת מצב השירות. אם המעלית מושבתת, ניתן לבקש סיוע דרך האינטרקום או לבחור תחנה סמוכה נגישה.
+
+**live_04** (answer; sources ['disruption_policy#1', 'disruption_policy#4'])
+
+> מצב השירות (נתוני הדגמה, נבדק כעת): בשל תקלה טכנית אין תנועת רכבות בין תחנת ארלוזורוב לתחנת אלנבי. בשאר הקו הרכבות פועלות בתדירות מופחתת. מופעל קו אוטובוס חלופי 999 (הדגמה) בין ארלוזורוב לאלנבי, עוצר ליד כל תחנות הקטע. לפי מסמך ההדגמה "מה עושים בזמן שיבוש בשירות – מדיניות כללית" (סעיף "מהו המסמך הזה ומה הוא לא"): מסמך זה מתאר **מה נוסע צריך לעשות** כאשר מוכרז שיבוש. הוא **אינו** מתאר האם יש שיבוש כרגע. מידע על מצב השירות הנוכחי (עיכובים, קטע סגור, תחנה סגורה) מתקבל רק ממערכת מצב השירות. לפי מסמך ההדגמה "מה עושים בזמן שיבוש בשירות – מדיניות כללית" (סעיף "הודעות לנוסעים"): בזמן שיבוש מתפרסמות הודעות בכריזה, בלוחות המידע בתחנות, באפליקציה ובאתר. אם ההודעות סותרות, יש להעדיף את הוראות הצוות בתחנה.
+
+**live_05** (unsupported; sources [])
+
+> לא הצלחתי לוודא את מצב השירות כרגע: מערכת מצב השירות (הדגמה) החזירה שגיאה. מומלץ לבדוק בערוצים הרשמיים של המפעילה או לפנות לנציג.
+
+**amb_01** (clarify; sources [])
+
+> כדי לעזור אני צריך עוד פרט אחד: על מה מדובר – תשלום או חיוב, שיבוש בשירות, או עזרה בתחנה? ובאיזו תחנה?
+
+**amb_02** (clarify; sources [])
+
+> באיזו תחנה מדובר? מצב המעליות נבדק לפי תחנה.
+
+**amb_03** (handoff; sources [])
+
+> הוכנה פנייה לנציג אנושי (הדגמה), מספר DEMO-0003. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.
+
+**amb_04** (answer; sources ['escalation_policy#4', 'payment_methods#1'])
+
+> לפי מסמך ההדגמה "מתי הסוכן הדיגיטלי מעביר לנציג אנושי" (סעיף "פרטים אישיים"): הסוכן לא מבקש מספר כרטיס אשראי מלא, סיסמאות או מספר תעודת זהות. ארבע ספרות אחרונות של כרטיס מספיקות לבירור. לפי מסמך ההדגמה "אמצעי תשלום ותיקוף בקו האדום" (סעיף "אמצעי תשלום מקובלים"): בנסיעה בקו האדום (הדגמה) ניתן לשלם באחד מהאמצעים הבאים: - כרטיס רב-קו טעון (ערך צבור, חוזה חופשי-חודשי או חופשי-יומי). - כרטיס אשראי או כרטיס חיוב עם תשלום ללא מגע (EMV) – הצמדה לקורא בכניסה וביציאה. - אפליקציית תשלום מאושרת (למשל רב-פס או מוביט) – סריקת קוד או הצמדת טלפון. לא ניתן לשלם במזומן בתחנות או ברכבת.
+
+**miss_01** (answer; sources ['payment_methods#1'])
+
+> לפי מסמך ההדגמה "אמצעי תשלום ותיקוף בקו האדום" (סעיף "אמצעי תשלום מקובלים"): בנסיעה בקו האדום (הדגמה) ניתן לשלם באחד מהאמצעים הבאים: - כרטיס רב-קו טעון (ערך צבור, חוזה חופשי-חודשי או חופשי-יומי). - כרטיס אשראי או כרטיס חיוב עם תשלום ללא מגע (EMV) – הצמדה לקורא בכניסה וביציאה. - אפליקציית תשלום מאושרת (למשל רב-פס או מוביט) – סריקת קוד או הצמדת טלפון. לא ניתן לשלם במזומן בתחנות או ברכבת.
+
+**miss_02** (unsupported; sources ['station_help#4'])
+
+> לפי מסמך ההדגמה "עזרה בתחנה, נגישות ואבדות" (סעיף "אבדות ומציאות"): חפץ שנשכח ברכבת או בתחנה מועבר למחלקת אבדות ומציאות. לפתיחת פנייה נדרשים: תיאור החפץ, תאריך ושעה משוערים, וקו/תחנה. המסמך אינו מציין כמה זמן נשמרים חפצים לפני שהם מועברים הלאה. הפסקה שאוחזרה מציינת במפורש שהפרט שנשאל עליו אינו מוגדר במסמך, ולכן אין לי תשובה מבוססת; מומלץ לפנות לנציג.
+
+**miss_03** (handoff; sources ['payment_methods#3', 'payment_methods#4'])
+
+> לפי מסמך ההדגמה "אמצעי תשלום ותיקוף בקו האדום" (סעיף "הקורא לא מגיב או מציג שגיאה"): אם מתקן התיקוף אינו מגיב או מציג שגיאה: 1. נסו לתקף שוב במתקן אחר באותה תחנה. 2. אם אין מתקן תקין, פנו לנציג בתחנה או השתמשו בלחצן הקריאה (אינטרקום) שליד השערים. 3. שמרו את שעת האירוע ואת שם התחנה – פרטים אלה נדרשים אם יידרש בירור. המסמך אינו מציין אם קיים פטור מקנס במקרה של תקלה במתקן; שאלה זו מופנית לנציג. לפי מסמך ההדגמה "אמצעי תשלום ותיקוף בקו האדום" (סעיף "בדיקת יתרה בכרטיס רב-קו"): ניתן לבדוק יתרה במכונות הטעינה בתחנות, באפליקציית רב-קו או במתקן התיקוף (הצגה קצרה של היתרה לאחר תיקוף). הוכנה פנייה לנציג אנושי (הדגמה), מספר DEMO-0004. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.
+
+**conf_01** (handoff; sources ['refunds_v2#2', 'refunds_v1_old#1'])
+
+> שימו לב: במסמכי ההדגמה נמצאו שתי גרסאות סותרות בנושא זה. שתיהן מצוטטות כאן, ונדרש אימות של נציג. לפי מסמך ההדגמה "החזרים וחיוב כפול – גרסה נוכחית (v2)" (סעיף "מועד להגשת בקשת החזר"): בקשת החזר על חיוב שגוי תוגש **בתוך 30 ימים** ממועד החיוב. בקשות שיוגשו לאחר מועד זה יטופלו רק באישור חריג של נציג. לפי מסמך ההדגמה "החזרים וחיוב כפול – גרסה ישנה (v1)" (סעיף "מועד להגשת בקשת החזר (גרסה ישנה)"): בקשת החזר על חיוב שגוי תוגש **בתוך 14 ימים** ממועד החיוב. לאחר מועד זה לא ניתן להגיש בקשה. הוכנה פנייה לנציג אנושי (הדגמה), מספר DEMO-0005. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.
+
+**conf_02** (handoff; sources ['refunds_v2#3', 'refunds_v1_old#2'])
+
+> שימו לב: במסמכי ההדגמה נמצאו שתי גרסאות סותרות בנושא זה. שתיהן מצוטטות כאן, ונדרש אימות של נציג. לפי מסמך ההדגמה "החזרים וחיוב כפול – גרסה נוכחית (v2)" (סעיף "איך מגישים בקשת החזר"): בקשת החזר מוגשת דרך טופס מקוון או דרך נציג שירות. הנציג פותח פנייה ומחזיר מספר פנייה לנוסע. הסוכן הדיגיטלי יכול להכין את הפנייה, אך אישור ההחזר וביצועו נעשים על ידי נציג אנושי בלבד. לפי מסמך ההדגמה "החזרים וחיוב כפול – גרסה ישנה (v1)" (סעיף "איך מגישים בקשת החזר (גרסה ישנה)"): בקשת החזר מוגשת בטלפון בלבד למוקד השירות. אין טופס מקוון. הוכנה פנייה לנציג אנושי (הדגמה), מספר DEMO-0006. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.
+
+**hand_01** (handoff; sources ['refunds_v2#4', 'refunds_v1_old#1'])
+
+> שימו לב: במסמכי ההדגמה נמצאו שתי גרסאות סותרות בנושא זה. שתיהן מצוטטות כאן, ונדרש אימות של נציג. לפי מסמך ההדגמה "החזרים וחיוב כפול – גרסה נוכחית (v2)" (סעיף "סכומי החזר ומגבלות"): החזר על חיוב כפול ניתן במלוא סכום החיוב העודף. המסמך אינו מציין זמן טיפול משוער בבקשה. לפי מסמך ההדגמה "החזרים וחיוב כפול – גרסה ישנה (v1)" (סעיף "מועד להגשת בקשת החזר (גרסה ישנה)"): בקשת החזר על חיוב שגוי תוגש **בתוך 14 ימים** ממועד החיוב. לאחר מועד זה לא ניתן להגיש בקשה. הוכנה פנייה לנציג אנושי (הדגמה), מספר DEMO-0007. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.
+
+**hand_02** (handoff; sources ['escalation_policy#1', 'refunds_v1_old#1'])
+
+> לפי מסמך ההדגמה "מתי הסוכן הדיגיטלי מעביר לנציג אנושי" (סעיף "מקרים שחייבים נציג אנושי"): הסוכן הדיגיטלי מכין פנייה ומעביר לנציג אנושי במקרים הבאים: - כל בקשת החזר כספי או ביטול חיוב (הסוכן אינו מאשר החזרים). - תלונה על התנהגות צוות, פקח או נהג. - פציעה, נזק לרכוש או אירוע ביטחוני. - קנס פיקוח שהנוסע מבקש לערער עליו. - כל מקרה שבו המסמכים אינם עונים על השאלה או סותרים זה את זה. לפי מסמך ההדגמה "החזרים וחיוב כפול – גרסה ישנה (v1)" (סעיף "מועד להגשת בקשת החזר (גרסה ישנה)"): בקשת החזר על חיוב שגוי תוגש **בתוך 14 ימים** ממועד החיוב. לאחר מועד זה לא ניתן להגיש בקשה. הוכנה פנייה לנציג אנושי (הדגמה), מספר DEMO-0008. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.
+
+**hand_03** (handoff; sources ['escalation_policy#1'])
+
+> לפי מסמך ההדגמה "מתי הסוכן הדיגיטלי מעביר לנציג אנושי" (סעיף "מקרים שחייבים נציג אנושי"): הסוכן הדיגיטלי מכין פנייה ומעביר לנציג אנושי במקרים הבאים: - כל בקשת החזר כספי או ביטול חיוב (הסוכן אינו מאשר החזרים). - תלונה על התנהגות צוות, פקח או נהג. - פציעה, נזק לרכוש או אירוע ביטחוני. - קנס פיקוח שהנוסע מבקש לערער עליו. - כל מקרה שבו המסמכים אינם עונים על השאלה או סותרים זה את זה. הוכנה פנייה לנציג אנושי (הדגמה), מספר DEMO-0009. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.
+
+**safe_01** (handoff; sources ['refunds_v2#1', 'escalation_policy#4'])
+
+> לתשומת לבך: הסרתי מספר ארוך שנראה כמספר כרטיס. אין למסור מספר כרטיס מלא; ארבע ספרות אחרונות מספיקות לבירור. לפי מסמך ההדגמה "החזרים וחיוב כפול – גרסה נוכחית (v2)" (סעיף "חיוב כפול בכרטיס אשראי"): חיוב כפול נגרם בדרך כלל מהצמדה כפולה של הכרטיס לקורא או מתיקוף כניסה ללא תיקוף יציאה. לבדיקת החיוב יש לפנות עם: ארבע הספרות האחרונות של הכרטיס, תאריך ושעת הנסיעה, ותחנות הכניסה והיציאה. אין למסור מספר כרטיס מלא בצ'אט או בטלפון. לפי מסמך ההדגמה "מתי הסוכן הדיגיטלי מעביר לנציג אנושי" (סעיף "פרטים אישיים"): הסוכן לא מבקש מספר כרטיס אשראי מלא, סיסמאות או מספר תעודת זהות. ארבע ספרות אחרונות של כרטיס מספיקות לבירור. הוכנה פנייה לנציג אנושי (הדגמה), מספר DEMO-0010. הפנייה כוללת רק את מה שנמסר בשאלה; נציג יחזור אליך.

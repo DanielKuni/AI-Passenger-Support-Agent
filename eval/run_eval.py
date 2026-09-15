@@ -1,0 +1,287 @@
+"""
+Evaluation runner.
+
+  python -m eval.run_eval            # both parts (agent part is skipped if no API key)
+  python -m eval.run_eval --retrieval-only
+
+Part A - retrieval check (no API key needed): for every case with `expected_doc`, is a passage from that
+         document among the top-4 BM25 results?  (hit@4)
+Part B - end-to-end agent check (needs ANTHROPIC_API_KEY): runs each case through the real agent + MCP server
+         and applies the deterministic checks listed in cases.json. No LLM judge, no invented scores.
+
+Writes eval/results.md (human readable) and eval/results_raw.json (full outputs).
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+from app import config  # noqa: E402
+from app.rag import BM25Retriever, load_passages  # noqa: E402
+
+EVAL_DIR = Path(__file__).resolve().parent
+CASES = json.loads((EVAL_DIR / "cases.json").read_text(encoding="utf-8"))["cases"]
+
+
+def set_scenario(name: str) -> None:
+    data = json.loads(config.STATUS_FILE.read_text(encoding="utf-8"))
+    data["active_scenario"] = name
+    config.STATUS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def retrieval_eval(retriever: BM25Retriever) -> list[dict]:
+    rows = []
+    for c in CASES:
+        if "expected_doc" not in c:
+            continue
+        query = c["turns"][-1] if len(c["turns"][-1].split()) >= 4 else " ".join(c["turns"])
+        hits = retriever.retrieve(query, k=config.TOP_K)
+        docs = [p.doc_id for p, _ in hits]
+        rows.append({"id": c["id"], "expected_doc": c["expected_doc"], "top_docs": docs,
+                     "hit": c["expected_doc"] in docs, "rank": docs.index(c["expected_doc"]) + 1 if c["expected_doc"] in docs else None})
+    return rows
+
+
+def check_case(c: dict, r: dict) -> list[str]:
+    """Return a list of failed check names (empty = pass)."""
+    failed = []
+    ans = r["answer_he"] or ""
+    called = {t["tool"] for t in r["tool_calls"] if not t["is_error"]} | {t["tool"] for t in r["tool_calls"]}
+    cited_docs = {s["doc_id"] for s in r["sources"]}
+    if r["action"] not in c.get("expected_actions", [r["action"]]):
+        failed.append(f"action={r['action']} expected {c['expected_actions']}")
+    for t in c.get("must_call", []):
+        if t not in called:
+            failed.append(f"must_call {t}")
+    for t in c.get("must_not_call", []):
+        if t in called:
+            failed.append(f"must_not_call {t}")
+    if c.get("must_cite_any") and not (set(c["must_cite_any"]) & cited_docs):
+        failed.append(f"must_cite_any {c['must_cite_any']} (cited {sorted(cited_docs)})")
+    if c.get("answer_must_contain_any") and not any(s in ans for s in c["answer_must_contain_any"]):
+        failed.append("answer_must_contain_any")
+    for s in c.get("answer_must_contain_all", []):
+        if s not in ans:
+            failed.append(f"answer_must_contain '{s}'")
+    for s in c.get("answer_must_not_contain", []):
+        if s in ans:
+            failed.append(f"answer_must_not_contain '{s}'")
+    if c.get("answer_must_not_match") and re.search(c["answer_must_not_match"], ans):
+        failed.append(f"answer_must_not_match /{c['answer_must_not_match']}/")
+    for f in c.get("flags_must_not_include", []):
+        if f in r["flags"]:
+            failed.append(f"flag {f}")
+    return failed
+
+
+async def agent_eval(retriever: BM25Retriever) -> list[dict]:
+    import anthropic
+    from app.agent import Agent
+    from app.mcp_client import MCPBridge
+
+    bridge = MCPBridge(config.MCP_SERVER_SCRIPT)
+    await bridge.start()
+    agent = Agent(retriever, bridge, anthropic.AsyncAnthropic())
+    rows = []
+    try:
+        for c in CASES:
+            set_scenario(c.get("scenario", "normal"))
+            history: list[dict] = []
+            result = None
+            error = None
+            try:
+                for turn in c["turns"]:
+                    result = await agent.answer(turn, history, scenario_label=c.get("scenario"))
+                    history.append({"role": "user", "content": turn})
+                    history.append({"role": "assistant", "content": result["answer_he"]})
+            except Exception as e:  # keep going; record the failure
+                error = f"{type(e).__name__}: {e}"
+            if result is None:
+                rows.append({"id": c["id"], "category": c["category"], "passed": False, "failed": [f"exception: {error}"],
+                             "action": None, "tools": [], "answer_he": "", "flags": []})
+                print(f"[{c['id']}] EXCEPTION {error}")
+                continue
+            failed = check_case(c, result)
+            if error:
+                failed.append(f"exception: {error}")
+            rows.append({
+                "id": c["id"], "category": c["category"], "passed": not failed, "failed": failed,
+                "action": result["action"], "expected_actions": c.get("expected_actions"),
+                "tools": [t["tool"] for t in result["tool_calls"]], "sources": [s["id"] for s in result["sources"]],
+                "flags": result["flags"], "answer_he": result["answer_he"], "note": result.get("note", ""),
+                "usage": result["usage"], "scenario": c.get("scenario", "normal"),
+            })
+            print(f"[{c['id']}] {'PASS' if not failed else 'FAIL ' + '; '.join(failed)} | action={result['action']} tools={rows[-1]['tools']}")
+    finally:
+        set_scenario("normal")
+        await bridge.stop()
+    return rows
+
+
+async def offline_demo_eval(retriever: BM25Retriever) -> list[dict]:
+    """Part C: the three guided offline scenarios. Real retrieval + real MCP; the reply text is predefined."""
+    from app.mcp_client import MCPBridge
+    from app.offline_demo import SCENARIOS, run_scenario
+
+    bridge = MCPBridge(config.MCP_SERVER_SCRIPT)
+    await bridge.start()
+    rows = []
+    try:
+        for s in SCENARIOS:
+            r = await run_scenario(s["id"], retriever, bridge)
+            failed = []
+            if not r["retrieved"]:
+                failed.append("no passages retrieved")
+            if [x["id"] for x in r["sources"]] != s["sources"]:
+                failed.append(f"predefined sources not all retrieved: got {[x['id'] for x in r['sources']]}")
+            expected_tools = [c["tool"] for c in s["tool_calls"]]
+            if [c["tool"] for c in r["tool_calls"]] != expected_tools:
+                failed.append(f"tool calls {[c['tool'] for c in r['tool_calls']]} != {expected_tools}")
+            if any(c["is_error"] for c in r["tool_calls"]):
+                failed.append("an MCP call returned an error")
+            if s["action"] == "handoff" and not (r["case"] and str(r["case"].get("case_id", "")).startswith("DEMO-")):
+                failed.append("no demo case id returned by MCP")
+            if "{" in r["answer_he"]:
+                failed.append("unfilled template placeholder")
+            if r["flags"]:
+                failed.append(f"flags {r['flags']}")
+            rows.append({"id": s["id"], "passed": not failed, "failed": failed, "action": r["action"],
+                         "tools": [c["tool"] for c in r["tool_calls"]], "sources": [x["id"] for x in r["sources"]],
+                         "case_id": (r["case"] or {}).get("case_id"), "answer_he": r["answer_he"]})
+            print(f"[offline {s['id']}] {'PASS' if not failed else 'FAIL ' + '; '.join(failed)}")
+    finally:
+        set_scenario("normal")
+        await bridge.stop()
+    return rows
+
+
+async def offline_workflow_eval(retriever: BM25Retriever) -> list[dict]:
+    """Part D: all 24 cases through the deterministic offline workflow (free-form path), same checks as Part B."""
+    from app.mcp_client import MCPBridge
+    from app.offline_workflow import run_free_question
+
+    bridge = MCPBridge(config.MCP_SERVER_SCRIPT)
+    await bridge.start()
+    rows = []
+    try:
+        for c in CASES:
+            set_scenario(c.get("scenario", "normal"))
+            history: list[dict] = []
+            result = None
+            for turn in c["turns"]:
+                result = await run_free_question(turn, history, retriever, bridge)
+                history.append({"role": "user", "content": turn})
+                history.append({"role": "assistant", "content": result["answer_he"]})
+            failed = check_case(c, result)
+            rows.append({"id": c["id"], "category": c["category"], "passed": not failed, "failed": failed,
+                         "action": result["action"], "expected_actions": c.get("expected_actions"),
+                         "tools": [t["tool"] for t in result["tool_calls"]], "sources": [s["id"] for s in result["sources"]],
+                         "flags": result["flags"], "answer_he": result["answer_he"], "scenario": c.get("scenario", "normal")})
+            print(f"[workflow {c['id']}] {'PASS' if not failed else 'FAIL ' + '; '.join(failed)} | action={result['action']} tools={rows[-1]['tools']}")
+    finally:
+        set_scenario("normal")
+        await bridge.stop()
+    return rows
+
+
+def write_report(retrieval_rows: list[dict], agent_rows: list[dict] | None, skipped_reason: str | None,
+                 offline_rows: list[dict] | None = None, workflow_rows: list[dict] | None = None) -> None:
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    L = [f"# Evaluation results", "", f"Generated: {now}  ", f"Model: `{config.MODEL_ID}` (effort `{config.EFFORT}`)  ",
+         f"Cases: {len(CASES)} in `eval/cases.json`", "",
+         "All checks are deterministic string/tool/action checks defined per case. No LLM judge was used.", ""]
+    hits = sum(r["hit"] for r in retrieval_rows)
+    L += [f"## Part A - retrieval (BM25, hit@{config.TOP_K}) - no API key needed", "",
+          f"**{hits}/{len(retrieval_rows)} cases** have a passage from the expected document in the top {config.TOP_K}.", "",
+          "| case | expected doc | rank | top docs |", "|---|---|---|---|"]
+    for r in retrieval_rows:
+        L.append(f"| {r['id']} | {r['expected_doc']} | {r['rank'] if r['hit'] else 'miss'} | {', '.join(r['top_docs'])} |")
+    L.append("")
+    L.append("## Part B - end-to-end agent checks (real model + real MCP server)")
+    L.append("")
+    if agent_rows is None:
+        L += [f"**Not run.** {skipped_reason}", ""]
+    else:
+        passed = sum(r["passed"] for r in agent_rows)
+        L += [f"**{passed}/{len(agent_rows)} cases passed all their checks.**", ""]
+        cats: dict[str, list] = {}
+        for r in agent_rows:
+            cats.setdefault(r["category"], []).append(r["passed"])
+        L += ["| category | passed |", "|---|---|"]
+        for k, v in cats.items():
+            L.append(f"| {k} | {sum(v)}/{len(v)} |")
+        tin = sum(r.get("usage", {}).get("input_tokens", 0) for r in agent_rows)
+        tout = sum(r.get("usage", {}).get("output_tokens", 0) for r in agent_rows)
+        L += ["", f"Tokens used by the run: {tin} input / {tout} output.", "",
+              "| case | category | scenario | expected action | got | tools called | result |", "|---|---|---|---|---|---|---|"]
+        for r in agent_rows:
+            res = "PASS" if r["passed"] else "FAIL: " + "; ".join(r["failed"])
+            L.append(f"| {r['id']} | {r['category']} | {r.get('scenario','')} | {', '.join(r.get('expected_actions') or [])} | {r['action']} | {', '.join(r['tools']) or '-'} | {res} |")
+        L += ["", "### Answers (for manual reading)", ""]
+        for r in agent_rows:
+            L += [f"**{r['id']}** ({r['action']}; sources {r.get('sources')}; flags {r['flags']})", "", f"> {r['answer_he'].replace(chr(10), ' ')}", ""]
+    L += ["", "## Part C - offline guided demo (real retrieval + real MCP, predefined responses) - no API key needed", ""]
+    if offline_rows is None:
+        L += ["**Not run.**", ""]
+    else:
+        L += [f"**{sum(r['passed'] for r in offline_rows)}/{len(offline_rows)} scenarios passed.** "
+              "The reply text in these scenarios is predefined, so this part checks only the real parts: "
+              "retrieval returned the passages the predefined reply cites, the MCP calls happened and succeeded, "
+              "and the handoff scenario received a demo case id from the MCP server.", "",
+              "| scenario | action | MCP tools called | sources validated | case id | result |", "|---|---|---|---|---|---|"]
+        for r in offline_rows:
+            L.append(f"| {r['id']} | {r['action']} | {', '.join(r['tools']) or '-'} | {', '.join(r['sources'])} | {r['case_id'] or '-'} | {'PASS' if r['passed'] else 'FAIL: ' + '; '.join(r['failed'])} |")
+    L += ["", "## Part D - deterministic offline workflow on all 24 cases (free-form path, no model, no API key)", ""]
+    if workflow_rows is None:
+        L += ["**Not run.**", ""]
+    else:
+        passed = sum(r["passed"] for r in workflow_rows)
+        L += [f"**{passed}/{len(workflow_rows)} cases passed all their checks.** The checks were written for the model-driven agent; "
+              "this part shows how far regex rules + BM25 quotes + real MCP calls get without a model. Failures are listed as measured.", ""]
+        cats: dict[str, list] = {}
+        for r in workflow_rows:
+            cats.setdefault(r["category"], []).append(r["passed"])
+        L += ["| category | passed |", "|---|---|"]
+        for k, v in cats.items():
+            L.append(f"| {k} | {sum(v)}/{len(v)} |")
+        L += ["", "| case | category | scenario | expected action | got | tools called | result |", "|---|---|---|---|---|---|---|"]
+        for r in workflow_rows:
+            res = "PASS" if r["passed"] else "FAIL: " + "; ".join(r["failed"])
+            L.append(f"| {r['id']} | {r['category']} | {r.get('scenario','')} | {', '.join(r.get('expected_actions') or [])} | {r['action']} | {', '.join(r['tools']) or '-'} | {res} |")
+        L += ["", "### Templated replies (for manual reading)", ""]
+        for r in workflow_rows:
+            L += [f"**{r['id']}** ({r['action']}; sources {r.get('sources')})", "", f"> {r['answer_he'].replace(chr(10), ' ')}", ""]
+    (EVAL_DIR / "results.md").write_text("\n".join(L), encoding="utf-8")
+    (EVAL_DIR / "results_raw.json").write_text(json.dumps({"retrieval": retrieval_rows, "agent": agent_rows, "offline_demo": offline_rows, "offline_workflow": workflow_rows}, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\nwrote {EVAL_DIR / 'results.md'}")
+
+
+def main() -> None:
+    retriever = BM25Retriever(load_passages(config.DOCS_DIR))
+    retrieval_rows = retrieval_eval(retriever)
+    print(f"Part A retrieval: {sum(r['hit'] for r in retrieval_rows)}/{len(retrieval_rows)} hit@{config.TOP_K}")
+    agent_rows, skipped, offline_rows, workflow_rows = None, None, None, None
+    if "--retrieval-only" not in sys.argv:
+        offline_rows = asyncio.run(offline_demo_eval(retriever))
+        workflow_rows = asyncio.run(offline_workflow_eval(retriever))
+    if "--retrieval-only" in sys.argv:
+        skipped = "Skipped by --retrieval-only."
+    elif not config.has_api_key():
+        skipped = "ANTHROPIC_API_KEY is not set (this project is presented in offline demo mode). Add a key to .env and run `python -m eval.run_eval` to measure it."
+    else:
+        agent_rows = asyncio.run(agent_eval(retriever))
+    write_report(retrieval_rows, agent_rows, skipped, offline_rows, workflow_rows)
+
+
+if __name__ == "__main__":
+    main()

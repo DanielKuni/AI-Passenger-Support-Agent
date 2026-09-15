@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>סוכן תמיכה לנוסעי הקו האדום (הדגמה)</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --line:#dfe3e8; --text:#1c2430; --muted:#5f6b7a; --red:#c8102e; --accent:#0b5fff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Segoe UI", Arial, "Noto Sans Hebrew", sans-serif; background:var(--bg); color:var(--text); }
+  header { background:#fff; border-bottom:3px solid var(--red); padding:12px 20px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+  header h1 { font-size:18px; margin:0; }
+  .demo { background:#fff3cd; color:#7a5600; border:1px solid #ffe08a; border-radius:6px; padding:6px 10px; font-size:13px; }
+  .mode { background:#e8f0ff; color:#123d8a; border:1px solid #bcd0ff; border-radius:6px; padding:6px 10px; font-size:13px; }
+  .toolbar { margin-inline-start:auto; display:flex; gap:8px; align-items:center; font-size:13px; flex-wrap:wrap; }
+  select, button, input, textarea { font: inherit; }
+  select, button { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.mic { font-size:18px; padding:4px 10px; }
+  button.mic.rec { background:#fde8e8; border-color:#c62828; }
+  main { display:grid; grid-template-columns: 1.2fr 1fr; gap:16px; padding:16px 20px; max-width:1400px; margin:0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .chat { display:flex; flex-direction:column; min-height:70vh; }
+  .guided { border:1px solid #bcd0ff; background:#f4f8ff; border-radius:10px; padding:10px 12px; margin-bottom:12px; }
+  .guided h2 { font-size:15px; margin:0 0 4px; }
+  .guided p { margin:0 0 8px; font-size:13px; color:var(--muted); }
+  .scenarios { display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap:8px; }
+  .scenario { background:#fff; border:1px solid var(--line); border-radius:8px; padding:10px; display:flex; flex-direction:column; gap:6px; font-size:13px; }
+  .scenario .q { color:var(--text); }
+  .scenario .intro { color:var(--muted); font-size:12px; flex:1; }
+  .messages { flex:1; overflow:auto; display:flex; flex-direction:column; gap:10px; padding-bottom:8px; }
+  .msg { padding:10px 12px; border-radius:10px; max-width:94%; white-space:pre-wrap; line-height:1.5; }
+  .msg.user { background:#e8f0ff; align-self:flex-start; }
+  .msg.bot { background:#f1f3f5; align-self:flex-end; }
+  .msg.err { background:#fde8e8; color:#8a1c1c; align-self:flex-end; }
+  .badge { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; margin:0 0 6px 4px; color:#fff; }
+  .badge.answer { background:#2e7d32; } .badge.clarify { background:#f9a825; color:#222; }
+  .badge.handoff { background:#c62828; } .badge.unsupported { background:#546e7a; }
+  .badge.predefined { background:#6a1b9a; }
+  .badge.model { background:#0b5fff; }
+  .sources { margin-top:8px; font-size:13px; color:var(--muted); }
+  .sources details { margin-top:4px; } .sources summary { cursor:pointer; }
+  .sources .excerpt { background:#fff; border:1px solid var(--line); border-radius:6px; padding:8px; margin-top:4px; color:var(--text); white-space:pre-wrap; }
+  .case { margin-top:8px; font-size:13px; background:#fff; border:1px dashed var(--red); border-radius:6px; padding:8px; }
+  .steps { margin-top:8px; font-size:12px; color:var(--muted); border-top:1px dotted var(--line); padding-top:6px; }
+  .steps li { margin:2px 0; }
+  .tts { margin-top:6px; display:flex; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
+  .tts button { font-size:12px; padding:2px 8px; }
+  .composer { display:flex; gap:8px; margin-top:10px; align-items:stretch; }
+  .composer textarea { flex:1; padding:8px; border:1px solid var(--line); border-radius:8px; resize:vertical; min-height:44px; }
+  .voice-status { font-size:12px; color:var(--muted); margin-top:4px; min-height:16px; }
+  .examples { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .examples button { font-size:12px; padding:4px 8px; }
+  .dev h2 { font-size:15px; margin:0 0 8px; }
+  .dev h3 { font-size:13px; margin:12px 0 6px; color:var(--muted); }
+  .kv { font-size:12px; color:var(--muted); }
+  pre { direction:ltr; text-align:left; background:#0f172a; color:#e2e8f0; padding:10px; border-radius:8px; font-size:12px; overflow:auto; max-height:260px; white-space:pre-wrap; margin:6px 0; }
+  .tool { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; font-size:13px; }
+  .tool .name { font-weight:600; direction:ltr; display:inline-block; }
+  .tool.error { border-color:#e57373; }
+  .flags span { display:inline-block; background:#fde8e8; color:#8a1c1c; border-radius:6px; padding:2px 6px; font-size:12px; margin:2px; direction:ltr; }
+  .hit { font-size:13px; padding:4px 0; border-bottom:1px dotted var(--line); }
+  .hit .score { color:var(--muted); direction:ltr; display:inline-block; }
+  .hit.cited { background:#eaf7ea; }
+  .cases-list { font-size:13px; }
+  .muted { color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>סוכן תמיכה לנוסעי הקו האדום</h1>
+  <span class="demo">הדגמה: מסמכי ההנחיה, מצב השירות והפניות לנציג הם נתוני הדגמה ואינם מחוברים למערכת אמיתית</span>
+  <span class="mode" id="mode">…</span>
+  <div class="toolbar">
+    <label>תרחיש מצב שירות (הדגמה): <select id="scenario"></select></label>
+    <button id="newChat">ניקוי שיחה</button>
+    <span id="meta" class="muted"></span>
+  </div>
+</header>
+
+<main>
+  <section class="card chat">
+    <div class="guided">
+      <h2>הדגמה מודרכת – ללא מפתח API וללא מודל שפה</h2>
+      <p>בכל תרחיש האחזור מהמסמכים וקריאות ה-MCP מתבצעים באמת; רק נוסח התשובה מוגדר מראש ומסומן ככזה.</p>
+      <div class="scenarios" id="scenarios"></div>
+    </div>
+    <div class="messages" id="messages"></div>
+    <div class="composer">
+      <button class="mic" id="mic" title="דיבור בעברית (he-IL)">🎤</button>
+      <textarea id="input" placeholder="כתבו או דברו שאלה על תשלום, שיבוש בשירות או עזרה בתחנה…"></textarea>
+      <button class="primary" id="send">שליחה</button>
+    </div>
+    <div class="voice-status" id="voiceStatus"></div>
+    <div class="examples" id="examples"></div>
+  </section>
+
+  <aside class="card dev">
+    <h2>פאנל מפתחים – התור האחרון</h2>
+    <div class="kv" id="devMeta">עדיין לא הורץ תרחיש.</div>
+    <h3>דגלים (בדיקות קוד על התשובה)</h3>
+    <div class="flags" id="flags"><span class="muted">—</span></div>
+    <h3>קריאות אמיתיות לכלי MCP (הנתונים שמוחזרים הם נתוני הדגמה)</h3>
+    <div id="tools"><span class="muted">—</span></div>
+    <h3>פסקאות שאוחזרו (BM25, ירוק = צוטט)</h3>
+    <div id="hits"><span class="muted">—</span></div>
+    <h3>פלט מודל גולמי</h3>
+    <pre id="raw">—</pre>
+    <h3>פניות הדגמה שהוכנו לנציג <button id="refreshCases" style="font-size:12px">רענון</button></h3>
+    <div class="cases-list" id="cases"><span class="muted">—</span></div>
+  </aside>
+</main>
+
+<script>
+const ACTION_LABEL = { answer: "מענה מבוסס מסמכים/כלים", clarify: "שאלת הבהרה", handoff: "העברה לנציג אנושי", unsupported: "אין תמיכה במסמכים" };
+const EXAMPLES = [
+  "אפשר לשלם במזומן ברכבת?", "יש עיכובים בקו עכשיו?", "המעלית בתחנת אלנבי עובדת?",
+  "עד מתי אפשר להגיש בקשת החזר על חיוב שגוי?", "כמה עולה חופשי חודשי לסטודנטים?", "לא עבד לי",
+  "קיבלתי קנס למרות שתיקפתי, אני רוצה לערער",
+];
+let sessionId = null, liveMode = false;
+const $ = id => document.getElementById(id);
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function pretty(s) { try { return JSON.stringify(JSON.parse(s), null, 1); } catch { return s; } }
+const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+// ---------- speech recognition (browser API, he-IL) ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null, recognizing = false;
+function initSpeech() {
+  if (!SR) { $("mic").disabled = true; $("mic").title = "זיהוי דיבור אינו נתמך בדפדפן זה"; setVoiceStatus("זיהוי דיבור אינו נתמך בדפדפן זה – אפשר להקליד."); return; }
+  recog = new SR(); recog.lang = "he-IL"; recog.interimResults = true; recog.continuous = false; recog.maxAlternatives = 1;
+  recog.onresult = e => {
+    let text = ""; let final = false;
+    for (const r of e.results) { text += r[0].transcript; if (r.isFinal) final = true; }
+    $("input").value = text;
+    setVoiceStatus(final ? "תמלול הסתיים. אפשר לתקן את הטקסט בתיבה ואז ללחוץ שליחה." : "מתמלל…");
+  };
+  recog.onerror = e => setVoiceStatus("שגיאת זיהוי דיבור: " + e.error + " – אפשר להקליד במקום.");
+  recog.onend = () => { recognizing = false; $("mic").textContent = "🎤"; $("mic").classList.remove("rec"); };
+}
+function setVoiceStatus(t) { $("voiceStatus").textContent = t; }
+function toggleRec() {
+  if (!recog) return;
+  if (recognizing) { recog.stop(); return; }
+  $("input").value = ""; recognizing = true; $("mic").textContent = "■"; $("mic").classList.add("rec");
+  setVoiceStatus("מאזין… דברו בעברית. התמלול יופיע בתיבה ואפשר לתקן אותו לפני השליחה.");
+  try { recog.start(); } catch (e) { recognizing = false; setVoiceStatus("לא ניתן להפעיל זיהוי דיבור: " + e); }
+}
+$("mic").addEventListener("click", toggleRec);
+
+// ---------- text to speech (browser API, Hebrew voice if installed) ----------
+let heVoice = null;
+function pickVoice() {
+  if (!("speechSynthesis" in window)) return;
+  const vs = speechSynthesis.getVoices();
+  heVoice = vs.find(v => (v.lang || "").toLowerCase().startsWith("he")) || null;
+  document.querySelectorAll("button.play").forEach(b => { b.disabled = !heVoice; b.title = heVoice ? "השמעת התשובה בעברית" : "אין קול עברי מותקן בדפדפן"; });
+  document.querySelectorAll(".tts-note").forEach(n => n.textContent = heVoice ? `קול: ${heVoice.name}` : "אין קול עברי מותקן בדפדפן – ההשמעה כבויה, הטקסט זמין.");
+}
+if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+function speak(text) {
+  if (!("speechSynthesis" in window) || !heVoice) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text); u.voice = heVoice; u.lang = "he-IL"; u.rate = 1;
+  speechSynthesis.speak(u);
+}
+function stopSpeak() { if ("speechSynthesis" in window) speechSynthesis.cancel(); }
+
+// ---------- page ----------
+async function loadMeta() {
+  const m = await (await fetch("/api/meta")).json();
+  liveMode = m.mode === "live";
+  const sel = $("scenario"); sel.innerHTML = "";
+  for (const [k, label] of Object.entries(m.scenarios)) {
+    const o = document.createElement("option"); o.value = k; o.textContent = label; if (k === m.scenario) o.selected = true; sel.appendChild(o);
+  }
+  $("mode").textContent = liveMode ? `מצב: מודל חי (${m.model}) + הדגמה מודרכת` : "מצב: הדגמה ללא מודל – שאלות חופשיות עוברות במסלול דטרמיניסטי (אחזור + MCP), ללא מפתח API";
+  $("meta").textContent = `${m.passages} פסקאות · כלי MCP: ${m.tools.join(", ")}`;
+  $("examples").innerHTML = "";
+  for (const ex of EXAMPLES) { const b = document.createElement("button"); b.textContent = ex; b.onclick = () => { $("input").value = ex; send(); }; $("examples").appendChild(b); }
+  $("scenarios").innerHTML = "";
+  for (const s of m.offline_scenarios) {
+    const d = document.createElement("div"); d.className = "scenario";
+    d.innerHTML = `<b>${escapeHtml(s.title_he)}</b><span class="q">„${escapeHtml(s.question)}”</span><span class="intro">${escapeHtml(s.intro_he)}</span>`;
+    const b = document.createElement("button"); b.className = "primary"; b.textContent = "הרצת התרחיש"; b.onclick = () => runOffline(s.id, b);
+    d.appendChild(b); $("scenarios").appendChild(d);
+  }
+}
+$("scenario").addEventListener("change", async e => {
+  await post("/api/scenario", { name: e.target.value });
+  addMsg("bot", `תרחיש ההדגמה הוחלף ל: ${e.target.selectedOptions[0].textContent}. (זה משנה רק את מה שכלי get_service_status מחזיר.)`);
+});
+$("newChat").addEventListener("click", async () => {
+  if (sessionId) await post("/api/reset", { session_id: sessionId, message: "" });
+  sessionId = null; $("messages").innerHTML = ""; resetDev(); stopSpeak();
+});
+
+function addMsg(kind, text) {
+  const d = document.createElement("div"); d.className = `msg ${kind}`; d.textContent = text; $("messages").appendChild(d);
+  $("messages").scrollTop = $("messages").scrollHeight; return d;
+}
+
+function renderBot(r) {
+  const d = document.createElement("div"); d.className = "msg bot";
+  const scripted = r.response_kind === "predefined" || r.response_kind === "templated";
+  let html = scripted
+    ? `<span class="badge predefined">${escapeHtml(r.response_label_he)}</span>`
+    : `<span class="badge model">תשובת מודל (${escapeHtml(r.model || "")})</span>`;
+  html += `<span class="badge ${r.action}">${ACTION_LABEL[r.action] || r.action}</span><div class="answer-text">${escapeHtml(r.answer_he)}</div>`;
+  if (r.sources.length) {
+    html += `<div class="sources">מקורות שאוחזרו בפועל (מסמכי הדגמה):` + r.sources.map(s =>
+      `<details><summary>${escapeHtml(s.doc_title)} › ${escapeHtml(s.section_title)} <span class="muted">(${escapeHtml(s.id)}, גרסה ${escapeHtml(s.doc_version)})</span></summary><div class="excerpt">${escapeHtml(s.text)}</div></details>`).join("") + `</div>`;
+  } else if (r.action === "answer") {
+    html += `<div class="sources">ללא ציטוט ממסמכים${r.tool_calls.some(t => t.tool === "get_service_status") ? " – מבוסס על כלי מצב השירות (הדגמה)" : ""}</div>`;
+  }
+  if (r.case) html += `<div class="case">פניית הדגמה לנציג (נוצרה בפועל על ידי שרת ה-MCP): <b>${escapeHtml(r.case.case_id || "")}</b> · קטגוריה: ${escapeHtml(r.case.category || "")}<br>${escapeHtml(r.case.summary_he || "")}</div>`;
+  if (r.steps && r.steps.length) html += `<div class="steps">מה קרה בפועל:<ol>${r.steps.map(s => `<li>${escapeHtml(s.detail_he)}</li>`).join("")}</ol></div>`;
+  html += `<div class="tts"><button class="play">▶ השמעה</button><button class="stop">■ עצירה</button><span class="tts-note"></span></div>`;
+  d.innerHTML = html;
+  d.querySelector("button.play").onclick = () => speak(r.answer_he);
+  d.querySelector("button.stop").onclick = stopSpeak;
+  $("messages").appendChild(d); $("messages").scrollTop = $("messages").scrollHeight;
+  pickVoice();
+}
+
+function resetDev() { $("devMeta").textContent = "עדיין לא הורץ תרחיש."; $("flags").innerHTML = '<span class="muted">—</span>'; $("tools").innerHTML = '<span class="muted">—</span>'; $("hits").innerHTML = '<span class="muted">—</span>'; $("raw").textContent = "—"; }
+function renderDev(r) {
+  const scripted = r.response_kind === "predefined" || r.response_kind === "templated";
+  const head = r.response_kind === "predefined" ? `מצב: הדגמה מודרכת · תרחיש: ${r.scenario_id}`
+    : r.response_kind === "templated" ? `מצב: מסלול דטרמיניסטי ללא מודל · רמז "מצב חי" מהקוד: ${r.live_hint ? "כן" : "לא"}`
+    : `מצב: מודל חי · רמז "מצב חי" מהקוד: ${r.live_hint ? "כן" : "לא"} · טוקנים: ${r.usage.input_tokens} in / ${r.usage.output_tokens} out`;
+  $("devMeta").textContent = `${head} · מצב שירות: ${r.status_scenario || r.scenario} · פעולה: ${r.action}` + (r.note ? ` · הערה: ${r.note}` : "");
+  $("flags").innerHTML = r.flags.length ? r.flags.map(f => `<span>${escapeHtml(f)}</span>`).join("") : '<span class="muted">אין דגלים</span>';
+  $("tools").innerHTML = r.tool_calls.length ? r.tool_calls.map(t =>
+    `<div class="tool ${t.is_error ? "error" : ""}"><span class="name">${escapeHtml(t.tool)}</span> · ${t.duration_ms} ms ${t.is_error ? "· שגיאה" : ""}<div class="muted">קלט</div><pre>${escapeHtml(JSON.stringify(t.input, null, 1))}</pre><div class="muted">פלט (נתוני הדגמה)</div><pre>${escapeHtml(pretty(t.output))}</pre></div>`).join("")
+    : '<span class="muted">לא נקראו כלים בתור זה</span>';
+  const cited = new Set(r.sources.map(s => s.id));
+  $("hits").innerHTML = r.retrieved.length ? r.retrieved.map(p => `<div class="hit ${cited.has(p.id) ? "cited" : ""}"><span class="score">${p.score}</span> · ${escapeHtml(p.id)} · ${escapeHtml(p.doc_title)} › ${escapeHtml(p.section_title)}</div>`).join("") : '<span class="muted">שום פסקה לא קיבלה ציון חיובי</span>';
+  $("raw").textContent = scripted ? "לא בוצעה קריאה למודל. התשובה הורכבה בקוד (ראו app/offline_demo.py ו-app/offline_workflow.py)." : r.raw_model_output;
+}
+
+async function loadCases() {
+  const cs = await (await fetch("/api/cases")).json();
+  $("cases").innerHTML = cs.length ? cs.slice(-8).reverse().map(c => `<div class="hit"><b>${escapeHtml(c.case_id)}</b> · ${escapeHtml(c.category)} · ${escapeHtml(c.summary_he)}</div>`).join("") : '<span class="muted">אין פניות עדיין</span>';
+}
+$("refreshCases").addEventListener("click", loadCases);
+
+async function runOffline(id, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await post("/api/offline/run", { scenario_id: id });
+    const body = await res.json();
+    if (!res.ok) { addMsg("err", body.detail || "שגיאה"); return; }
+    addMsg("user", body.question); renderBot(body); renderDev(body); loadCases();
+    const m = await (await fetch("/api/meta")).json(); $("scenario").value = m.scenario;
+  } catch (e) { addMsg("err", "שגיאת רשת: " + e); }
+  finally { if (btn) btn.disabled = false; }
+}
+
+async function send() {
+  const text = $("input").value.trim(); if (!text) return;
+  if (recognizing && recog) recog.stop();
+  $("input").value = ""; setVoiceStatus(""); addMsg("user", text);
+  const thinking = addMsg("bot", "…"); $("send").disabled = true;
+  try {
+    const res = await post(liveMode ? "/api/chat" : "/api/offline/ask", { session_id: sessionId, message: text });
+    const body = await res.json(); thinking.remove();
+    if (!res.ok) { addMsg("err", body.detail || "שגיאה"); return; }
+    sessionId = body.session_id; renderBot(body); renderDev(body); if (body.case) loadCases();
+  } catch (e) { thinking.remove(); addMsg("err", "שגיאת רשת: " + e); }
+  finally { $("send").disabled = false; }
+}
+$("send").addEventListener("click", send);
+$("input").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+
+(async () => {
+  initSpeech();
+  await loadMeta(); loadCases();
+  // Deep links used for screenshots and quick demos: ?autorun=payment_rag,status_mcp  and/or  ?ask=<question>
+  const params = new URLSearchParams(location.search);
+  for (const id of (params.get("autorun") || "").split(",").filter(Boolean)) await runOffline(id, null);
+  if (params.get("ask")) { $("input").value = params.get("ask"); await send(); }
+})();
+</script>
+</body>
+</html>
