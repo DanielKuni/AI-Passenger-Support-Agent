@@ -1,6 +1,6 @@
 {
   "_comment": "DEMO DATA. Simulated service status for the Tel Aviv Red Line. Not connected to any real feed. 'active_scenario' is switched from the web UI or by the evaluation runner.",
-  "active_scenario": "segment_closed",
+  "active_scenario": "normal",
   "known_stations": [
     "פתח תקווה מרכז",
     "קרול",
